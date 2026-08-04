@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily trigger for control-panel-renew.service (certbot auto-renewal check)
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1800
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Confirm action{% endblock %}
+{% block content %}
+<h1>Confirm action</h1>
+
+{% if action.is_live %}
+<p class="warning">⚠ <strong>{{ action.project_name }}</strong> is tagged PROD (production-critical).</p>
+{% endif %}
+{% if action.action_type == 'decommission_stop' %}
+<p class="warning">This stops and disables every service {{ action.project_name }} has enabled, unlinks its nginx site, and — if it succeeds — frees its Redis ledger indices and marks it decommissioned.</p>
+{% elif action.action_type == 'decommission_delete_files' %}
+<p class="warning">This permanently deletes /srv/apps/{{ action.project_name }} from disk. Not recoverable.</p>
+{% elif action.action_type == 'decommission_delete_cert' %}
+<p class="warning">This revokes and deletes the certificate for {{ action.target_unit }}. Not recoverable.</p>
+{% elif action.action_type == 'onboarding_clone' %}
+<p>This clones {{ action.project_name }}'s repo onto {{ action.target_host }} via its dedicated deploy key.</p>
+{% elif action.action_type == 'onboarding_setup' %}
+<p>This creates a venv and installs {{ action.project_name }}'s dependencies on {{ action.target_host }}.</p>
+{% elif action.action_type == 'onboarding_write_env' %}
+<p>Writes the real <code>.env</code> to {{ action.target_host }} via SFTP — actual values are never shown here or in the audit log, only the variable names being written.</p>
+{% elif action.action_type == 'onboarding_migrate' %}
+<p>Runs the framework's sanity check / migrations on {{ action.target_host }}.</p>
+{% elif action.action_type == 'onboarding_install_units' %}
+<p>Installs {{ action.project_name }}'s own concrete systemd unit file(s) — the shared templates other projects use are never touched.</p>
+{% elif action.action_type == 'onboarding_start' %}
+<p>Enables and starts {{ action.project_name }}'s services on {{ action.target_host }}.</p>
+{% elif action.action_type == 'lifecycle_pause' %}
+<p>Stops AND disables every service {{ action.project_name }} has enabled. Nginx site, Redis ledger, and cert are all left untouched — reversible with "resume".</p>
+{% elif action.action_type == 'lifecycle_resume' %}
+<p>Re-enables and starts every service {{ action.project_name }} has enabled, bringing it back from paused.</p>
+{% elif action.action_type == 'lifecycle_recommission' %}
+<p>Re-links {{ action.project_name }}'s nginx site, reclaims its original Redis indices, and starts its services again.</p>
+{% elif action.action_type == 'lifecycle_recommission_reallocate' %}
+<p class="warning">{{ action.project_name }}'s original Redis indices are no longer free. This allocates NEW indices, rewrites its <code>.env</code> on {{ action.target_host }}, re-links its nginx site, and starts its services.</p>
+{% elif action.action_type == 'lifecycle_delete_forever' %}
+<p class="warning">This permanently deletes {{ action.project_name }}'s record from the control panel (DB row + stored secrets) — not recoverable. Requires its files and cert to already be gone from {{ action.target_host }}.</p>
+{% elif action.action_type == 'onboarding_reclone' %}
+<p class="warning">Deletes {{ action.project_name }}'s cloned directory on {{ action.target_host }} so clone can be re-run — if dependencies were already installed, the venv goes with it too (it lives inside the same directory). Not recoverable, but re-cloning right after this is exactly the point.</p>
+{% elif action.action_type == 'observability_enable' %}
+<p>Creates a new GlitchTip project (for error tracking), grants an ntfy topic for alerts, and saves the shared Loki log-push credentials for {{ action.project_name }} — none of this is written to VM 100 yet, that needs the "Write .env" step re-run afterward. This never touches an existing GlitchTip project (including primary-store's) — only ever creates a new one.</p>
+{% elif action.action_type == 'redeploy' %}
+<p class="warning">Pulls the latest commit, reinstalls dependencies, re-runs migrations/collectstatic (Django), and restarts {{ action.project_name }}'s services on {{ action.target_host }}. The site briefly restarts as part of this.</p>
+{% endif %}
+
+{% if action.action_type == 'observability_enable' %}
+<p>About to run, as <code>{{ action.actor }}</code>, on this machine (VM 103) plus one HTTPS call to GlitchTip:</p>
+{% else %}
+<p>About to run, over SSH, as <code>{{ action.actor }}</code>:</p>
+{% endif %}
+<pre class="command">{{ action.command }}</pre>
+<p>Target host: <code>{{ action.target_host }}</code> — unit: <code>{{ action.target_unit }}</code></p>
+
+{% if action.action_type == 'service_restart' or action.action_type == 'redeploy' %}
+{% set confirm_url = '/actions/' + action.token + '/confirm' %}
+{% elif action.action_type.startswith('decommission') %}
+{% set confirm_url = '/decommission/' + action.token + '/confirm' %}
+{% elif action.action_type.startswith('onboarding') %}
+{% set confirm_url = '/wizard/' + action.token + '/confirm' %}
+{% elif action.action_type.startswith('lifecycle') %}
+{% set confirm_url = '/lifecycle/' + action.token + '/confirm' %}
+{% elif action.action_type == 'observability_enable' %}
+{% set confirm_url = '/projects/' + action.token + '/confirm' %}
+{% endif %}
+<form method="post" action="{{ confirm_url }}" style="display:inline">
+  <button type="submit" class="btn-danger">Confirm &amp; execute</button>
+</form>
+<form method="post" action="/actions/{{ action.token }}/cancel" style="display:inline">
+  <button type="submit">Cancel</button>
+</form>
+
+<p><small>This preview expires 10 minutes after it was generated.</small></p>
+{% endblock %}

@@ -1,0 +1,10 @@
+[Unit]
+Description=Control Panel — certbot auto-renewal check (oneshot)
+
+[Service]
+Type=oneshot
+User=deploy
+WorkingDirectory=/home/deploy/control-panel
+ExecStart=/home/deploy/control-panel/venv/bin/python3 -m app.renewal
+StandardOutput=append:/home/deploy/control-panel/renewal.log
+StandardError=append:/home/deploy/control-panel/renewal.log

@@ -1,0 +1,32 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+.htpasswd
+id_rsa*
+id_ed25519*
+deploy_*
+ci_*
+
+# State
+*.db
+*.sqlite3
+data/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+.coverage
+.pytest_cache/
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/

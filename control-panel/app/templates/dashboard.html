@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<div style="display:flex; align-items:center; justify-content:space-between;">
+  <h1>Projects</h1>
+  {% if user.role == 'admin' %}
+  <a href="/wizard/new" class="btn-small" style="padding:0.5rem 1rem;">+ New project</a>
+  {% endif %}
+</div>
+{% if projects %}
+<p class="muted" style="font-size:0.82rem; margin-top:-0.25rem;">The colored dot by each name is external reachability (green = the public URL responds, red = down) — hover it for details. Click a card for services, metrics, logs, and actions.</p>
+{% endif %}
+
+{% if not projects %}
+<div class="empty-state">
+  <h3>No projects yet</h3>
+  <p>Onboard your first Django or FastAPI app onto VM 100 — clone, configure, deploy, and go live over HTTPS, all from here.</p>
+  {% if user.role == 'admin' %}<a href="/wizard/new" class="btn-small btn-primary">+ New project</a>{% endif %}
+</div>
+{% endif %}
+
+<div class="card-grid">
+  {% for p in projects %}
+  <a href="/projects/{{ p.id }}" class="project-card">
+    <div class="project-card-name">
+      {% if p.health %}<span class="health-dot health-{{ p.health.last_status }}" title="External reachability: {{ p.health.last_status }}{% if p.health.last_http_status %} (HTTP {{ p.health.last_http_status }}){% endif %}{% if p.health.last_checked_at %} · checked {{ p.health.last_checked_at }} UTC{% endif %}{% if p.health.cert_days_left is not none %} · cert {{ p.health.cert_days_left }}d left{% endif %}"></span>{% endif %}
+      {{ p.name }}
+      {% if p.onboarding_step == 'https_live' %}<span class="tag-live">LIVE</span>{% endif %}
+      {% if p.is_live %}<span class="tag-prod" title="Tagged production-critical — extra warning shown before destructive actions">PROD</span>{% endif %}
+    </div>
+    <div class="project-card-url">
+      {% if p.duckdns_subdomain %}
+        {% if p.onboarding_step == 'https_live' %}
+          https://{{ p.duckdns_subdomain }}.duckdns.org
+        {% else %}
+          {{ p.duckdns_subdomain }}.duckdns.org (not live yet)
+        {% endif %}
+      {% else %}
+        no public URL yet
+      {% endif %}
+    </div>
+    <div class="project-card-services">
+      <span class="status-{{ p.live_status.get('gunicorn', 'n/a') }}">gunicorn: {{ p.live_status.get('gunicorn', 'n/a') }}</span>
+      {% if p.uses_celery %}<span class="status-{{ p.live_status.get('celery', 'n/a') }}">celery: {{ p.live_status.get('celery', 'n/a') }}</span>{% endif %}
+      {% if p.uses_celerybeat %}<span class="status-{{ p.live_status.get('celerybeat', 'n/a') }}">celerybeat: {{ p.live_status.get('celerybeat', 'n/a') }}</span>{% endif %}
+    </div>
+    <div style="margin-top:0.6rem; font-size:0.8rem; color:var(--text-faint);">{{ p.framework }} &middot; {{ p.vm_ip }} &middot; {{ p.status }}</div>
+  </a>
+  {% endfor %}
+</div>
+{% endblock %}

@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Recommission{% endblock %}
+{% block content %}
+<h1>{{ project.name }} — recommission</h1>
+<p><small>On VM 100: <code>/srv/apps/{{ project.name }}/</code> and <code>/etc/nginx/sites-available/{{ project.name }}</code> still exist from before decommission — nothing was deleted, just stopped and unlinked.</small></p>
+
+{% if not readiness.files_ok or not readiness.nginx_conf_ok or not readiness.cert_ok %}
+<p class="error">
+  {% if not readiness.files_ok %}This project's files are gone from {{ project.vm_ip }} — recommission isn't possible, only "delete forever" is available.{% endif %}
+  {% if not readiness.nginx_conf_ok %}This project's nginx site file is gone from {{ project.vm_ip }} — recommission isn't possible in its current state.{% endif %}
+  {% if not readiness.cert_ok %}This project's certificate is gone from {{ project.vm_ip }} — its nginx site references a cert that no longer exists. Re-issue a cert via the Phase 3 wizard before recommissioning.{% endif %}
+</p>
+
+{% elif readiness.conflicts %}
+<p class="warning">This project's Redis indices are no longer free:</p>
+<ul>
+  {% for c in readiness.conflicts %}
+  <li>index <strong>/{{ c.idx }}</strong> is now used by <strong>{{ c.project_name }}</strong></li>
+  {% endfor %}
+</ul>
+<p>Allocating new indices will rewrite {{ project.name }}'s <code>.env</code> on {{ project.vm_ip }} with the new values, then re-link its nginx site and start its services.</p>
+<form method="post" action="/lifecycle/{{ project.name }}/recommission-reallocate">
+  <button type="submit" class="btn-danger">Allocate new Redis indices and continue</button>
+</form>
+
+{% else %}
+<p>Ready to recommission — this will reclaim {{ project.name }}'s original Redis index{{ 'es' if project.redis_broker_index != project.redis_cache_index else '' }}
+  (/{{ project.redis_broker_index }}{% if project.redis_cache_index != project.redis_broker_index %}, /{{ project.redis_cache_index }}{% endif %}),
+  re-link its nginx site, and start its services.</p>
+<form method="post" action="/lifecycle/{{ project.name }}/recommission-confirm">
+  <button type="submit">Recommission</button>
+</form>
+{% endif %}
+
+<p><a href="/">Back to dashboard</a></p>
+{% endblock %}

@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Redis Ledger{% endblock %}
+{% block content %}
+<h1>Redis Index Ledger — 10.10.0.21:6379</h1>
+<table>
+  <thead><tr><th>Index</th><th>Status</th><th>Owner</th><th>Purpose / Notes</th></tr></thead>
+  <tbody>
+    {% for e in entries %}
+    <tr class="ledger-{{ e.status }}">
+      <td>/{{ e.idx }}</td>
+      <td>{{ e.status }}</td>
+      <td>{{ e.project_name or '—' }}</td>
+      <td>{{ e.purpose or e.notes or '' }}</td>
+    </tr>
+    {% endfor %}
+    <tr class="ledger-free">
+      <td colspan="4">/{{ entries[-1].idx + 1 if entries else 0 }} and up — free</td>
+    </tr>
+  </tbody>
+</table>
+{% endblock %}

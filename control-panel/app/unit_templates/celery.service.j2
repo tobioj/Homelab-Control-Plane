@@ -1,0 +1,14 @@
+[Unit]
+Description=celery worker for {{ project_name }}
+After=network.target
+
+[Service]
+User=deploy
+Group=www-data
+WorkingDirectory={{ app_dir }}
+EnvironmentFile={{ app_dir }}/.env
+ExecStart={{ app_dir }}/venv/bin/celery -A {{ celery_app or "config" }} worker --loglevel=info --concurrency=2
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

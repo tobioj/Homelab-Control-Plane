@@ -1,0 +1,17 @@
+[Unit]
+Description=gunicorn for {{ project_name }}
+After=network.target
+
+[Service]
+User=deploy
+Group=www-data
+RuntimeDirectory=gunicorn
+RuntimeDirectoryPreserve=yes
+WorkingDirectory={{ app_dir }}
+EnvironmentFile={{ app_dir }}/.env
+ExecStart={{ exec_start }}
+ExecReload=/bin/kill -s HUP $MAINPID
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

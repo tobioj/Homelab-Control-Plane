@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Environment variables{% endblock %}
+{% block content %}
+<h1>{{ project.name }} — environment variables</h1>
+<p>Add whatever variables this project needs — one per row, edit freely, remove any you don't want. Upload an existing <code>.env</code> to fill them in all at once, or pull individual ones from the repo's suggestions below. Redis/Celery URLs and <code>ALLOWED_HOSTS</code>/<code>DEBUG</code> are handled by their own steps and never appear here. Values are encrypted before being stored.</p>
+<p><small>On VM 100 this ends up at <code>/srv/apps/{{ project.name }}{{ '/' + project.app_subdir if project.app_subdir else '' }}/.env</code> (mode 600) — not written yet, that happens a couple of steps from now.</small></p>
+
+{% if generated %}
+<p class="warning">Generated automatically, never shown or edited: {% for key in generated %}<code>{{ key }}</code>{% if not loop.last %}, {% endif %}{% endfor %}. Each has a fresh random value — never typed, never shown, never logged.</p>
+{% endif %}
+
+{% if upload_applied %}
+<p class="warning">Pre-filled from your uploaded file — nothing's saved yet. Review/edit below and hit "Save &amp; continue" when ready.</p>
+{% endif %}
+
+{% if ignored_redis_keys %}
+<p class="warning">Your uploaded file's own Redis/Celery URLs were ignored on purpose: {% for key in ignored_redis_keys %}<code>{{ key }}</code>{% if not loop.last %}, {% endif %}{% endfor %}. These are always set from this tool's own Redis ledger allocation (the "Services &amp; Redis" step) — using your file's values risks pointing at an index a different project already owns.</p>
+{% endif %}
+
+{% if ignored_governed_keys %}
+<p class="warning">Your uploaded file's own {% for key in ignored_governed_keys %}<code>{{ key }}</code>{% if not loop.last %}, {% endif %}{% endfor %} value{{ 's were' if ignored_governed_keys|length > 1 else ' was' }} ignored on purpose — these are always computed by the wizard's own DuckDNS subdomain step, never taken from an uploaded file.</p>
+{% endif %}
+
+<details {% if not upload_applied and not editable %}open{% endif %}>
+<summary>Upload an existing <code>.env</code> file</summary>
+<form method="post" action="/wizard/{{ project.id }}/env-vars/upload" enctype="multipart/form-data" style="margin:0.5rem 0;">
+  <input type="file" name="envfile" required>
+  <button type="submit">Pre-fill from file</button>
+</form>
+<p><small>Only pre-fills the form below — nothing is saved until you hit "Save &amp; continue". Your existing values are kept and merged with the file (the file wins on a clash).</small></p>
+</details>
+
+<p><small><span class="error">required</span> = this repo's own code has no fallback and will fail to start without it. <span class="status-inactive">has its own default</span> = the repo already falls back if left blank. No label = not found in the repo's code, or a variable you added yourself.</small></p>
+
+<form method="post" action="/wizard/{{ project.id }}/env-vars">
+  <div id="envvars-rows">
+    {% for key, value in editable %}
+    <div class="envvar-row">
+      <input type="text" name="env_key" value="{{ key }}" placeholder="KEY" class="envvar-key" spellcheck="false" autocomplete="off">
+      <input type="text" name="env_value" value="{{ value }}" placeholder="value" class="envvar-value" spellcheck="false" autocomplete="off">
+      {% set verdict = required_verdicts.get(key) %}
+      {% if verdict == 'required' %}<span class="error envvar-tag">required</span>
+      {% elif verdict == 'has_default' %}<span class="status-inactive envvar-tag">has default</span>{% endif %}
+      <button type="button" class="btn-small btn-danger" onclick="removeEnvRow(this)">Remove</button>
+    </div>
+    {% endfor %}
+  </div>
+  <p><button type="button" class="btn-small" onclick="addEnvRow()">+ Add variable</button></p>
+  <button type="submit">Save &amp; continue</button>
+</form>
+
+{% if suggestions %}
+<details style="margin-top:1rem;">
+<summary>Suggested from this repo's <code>.env.example</code> ({{ suggestions|length }})</summary>
+<p><small>Not added automatically — click "Add" on any you want, then fill in the value above.</small></p>
+{% for key, example in suggestions %}
+<div class="envvar-row">
+  <code class="envvar-key">{{ key }}</code>
+  {% set verdict = required_verdicts.get(key) %}
+  {% if verdict == 'required' %}<span class="error envvar-tag">required</span>
+  {% elif verdict == 'has_default' %}<span class="status-inactive envvar-tag">has default</span>{% endif %}
+  {% if example %}<span class="muted"><small>e.g. {{ example }}</small></span>{% endif %}
+  <button type="button" class="btn-small" data-key="{{ key }}" data-example="{{ example }}" onclick="addSuggestion(this)">Add</button>
+</div>
+{% endfor %}
+</details>
+{% endif %}
+
+<template id="envrow-tpl">
+  <div class="envvar-row">
+    <input type="text" name="env_key" placeholder="KEY" class="envvar-key" spellcheck="false" autocomplete="off">
+    <input type="text" name="env_value" placeholder="value" class="envvar-value" spellcheck="false" autocomplete="off">
+    <button type="button" class="btn-small btn-danger" onclick="removeEnvRow(this)">Remove</button>
+  </div>
+</template>
+{% endblock %}

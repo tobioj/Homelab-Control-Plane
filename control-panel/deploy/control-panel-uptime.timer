@@ -1,0 +1,10 @@
+[Unit]
+Description=Trigger for control-panel-uptime.service (external uptime + cert checks)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=3min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

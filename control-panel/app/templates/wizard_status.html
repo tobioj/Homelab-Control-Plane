@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}{{ project.name }} — onboarding{% endblock %}
+{% block content %}
+{% set app_dir = '/srv/apps/' + project.name + ('/' + project.app_subdir if project.app_subdir else '') %}
+<h1>{{ project.name }}</h1>
+<p>Repo: <code>{{ project.repo_url }}</code> ({{ project.branch }}) — step: <strong>{{ project.onboarding_step }}</strong></p>
+{% include "_wizard_breadcrumb.html" %}
+
+{% if project.onboarding_step == 'intake' %}
+  <p><small>On VM 100: nothing exists yet — the deploy key generated here lands at <code>~/.ssh/deploy_{{ project.name }}</code>.</small></p>
+  <form method="post" action="/wizard/{{ project.id }}/deploy-key/generate">
+    <button type="submit">Generate deploy key</button>
+  </form>
+
+{% elif project.onboarding_step == 'awaiting_deploy_key' %}
+  <p>Add this as a <strong>read-only Deploy Key</strong> on the repo (GitHub → repo → Settings → Deploy keys → Add deploy key):</p>
+  <pre class="command">{{ pubkey }}</pre>
+  <button type="button" class="btn-small" data-copy="{{ pubkey }}" onclick="copyText(this)">Copy</button>
+  <form method="post" action="/wizard/{{ project.id }}/clone">
+    <button type="submit" class="btn-danger">I've added it — clone now</button>
+  </form>
+
+{% elif project.onboarding_step == 'cloned' %}
+  <p><small>On VM 100: repo is now at <code>/srv/apps/{{ project.name }}/</code>.</small></p>
+  <a href="/wizard/{{ project.id }}/locate">Where's the project, and which framework? →</a>
+
+{% elif project.onboarding_step == 'located' %}
+  <p>Framework: <strong>{{ project.framework }}</strong> — app subdir: <strong>{{ project.app_subdir or '(repo root)' }}</strong></p>
+  <p><small>On VM 100: the app itself lives at <code>{{ app_dir }}/</code>.</small></p>
+  <a href="/wizard/{{ project.id }}/entrypoint">Set the WSGI/ASGI entrypoint →</a>
+
+{% elif project.onboarding_step == 'entrypoint_set' %}
+  <p>Entrypoint: <strong>{{ project.wsgi_asgi_entrypoint }}</strong></p>
+  <p><small>This becomes the <code>ExecStart</code> target in <code>/etc/systemd/system/gunicorn@{{ project.name }}.service</code> once systemd units are installed (a few steps from now).</small></p>
+  <a href="/wizard/{{ project.id }}/dependency-file">Choose dependency file →</a>
+
+{% elif project.onboarding_step == 'dependency_file_detected' %}
+  <p>Framework: <strong>{{ project.framework }}</strong> — app subdir: <strong>{{ project.app_subdir or '(repo root)' }}</strong> — dependency file: <strong>{{ project.dependency_file }}</strong></p>
+  <p><small>On VM 100: <code>{{ app_dir }}/{{ project.dependency_file }}</code>. Next step creates <code>{{ app_dir }}/venv/</code> and installs from it.</small></p>
+  <form method="post" action="/wizard/{{ project.id }}/setup">
+    <button type="submit">Create venv &amp; install dependencies</button>
+  </form>
+
+{% elif project.onboarding_step == 'deps_installed' %}
+  <p class="warning">Phase 1 complete — venv and dependencies installed on {{ project.vm_ip }}.</p>
+  <p><small>On VM 100: <code>{{ app_dir }}/venv/</code>, built with <code>/usr/local/bin/python3.11</code>.</small></p>
+  <a href="/wizard/{{ project.id }}/services-redis">Configure services &amp; allocate Redis indices →</a>
+
+{% elif project.onboarding_step == 'services_configured' %}
+  <p>Celery: <strong>{{ project.uses_celery|int }}</strong> — beat: <strong>{{ project.uses_celerybeat|int }}</strong> — broker idx: <strong>/{{ project.redis_broker_index }}</strong> — cache idx: <strong>/{{ project.redis_cache_index }}</strong></p>
+  <p><small>Redis itself runs on VM 103 (this machine), NOT VM 100 — every project's broker/cache URL points back here regardless of where the app runs: <code>redis://10.10.0.21:6379/{{ project.redis_broker_index }}</code>{% if project.redis_cache_index != project.redis_broker_index %} (cache: <code>/{{ project.redis_cache_index }}</code>){% endif %}.</small></p>
+  <a href="/wizard/{{ project.id }}/env-vars">Fill in environment variables →</a>
+
+{% elif project.onboarding_step == 'env_vars_set' %}
+  <a href="/wizard/{{ project.id }}/subdomain">Set intended DuckDNS subdomain →</a>
+
+{% elif project.onboarding_step == 'subdomain_set' %}
+  <p>ALLOWED_HOSTS: <strong>{{ project.allowed_hosts }}</strong></p>
+  <p><small>On VM 100: about to write <code>{{ app_dir }}/.env</code> (mode 600).</small></p>
+  <form method="post" action="/wizard/{{ project.id }}/write-env">
+    <button type="submit">Write .env to {{ project.vm_ip }}</button>
+  </form>
+
+{% elif project.onboarding_step == 'env_written' %}
+  <p><small>On VM 100: <code>{{ app_dir }}/.env</code> is written (mode 600) — feel free to <code>ssh</code> in and check the permissions (not the contents, this panel never shows real secret values back to you either).</small></p>
+  <form method="post" action="/wizard/{{ project.id }}/migrate">
+    <button type="submit">{{ 'Run check + migrate + collectstatic' if project.framework == 'django' else 'Verify entrypoint imports cleanly' }}</button>
+  </form>
+
+{% elif project.onboarding_step == 'migrated' %}
+  <p><small>Database is migrated. Next: concrete (non-shared) systemd unit files get installed at <code>/etc/systemd/system/gunicorn@{{ project.name }}.service</code>{% if project.uses_celery %}, <code>celery@{{ project.name }}.service</code>{% endif %}{% if project.uses_celerybeat %}, <code>celerybeat@{{ project.name }}.service</code>{% endif %}.</small></p>
+  <form method="post" action="/wizard/{{ project.id }}/install-units">
+    <button type="submit">Render &amp; install systemd units</button>
+  </form>
+
+{% elif project.onboarding_step == 'units_installed' %}
+  <p><small>Unit files are on VM 100 now — <code>systemctl status gunicorn@{{ project.name }}</code> will show them, though nothing's started yet.</small></p>
+  <form method="post" action="/wizard/{{ project.id }}/start">
+    <button type="submit">Enable &amp; start services</button>
+  </form>
+
+{% elif project.onboarding_step == 'services_started' %}
+  <p><small>Running now — gunicorn's socket is at <code>/run/gunicorn/{{ project.name }}.sock</code>. No nginx/HTTPS in front of it yet.</small></p>
+  <form method="post" action="/wizard/{{ project.id }}/health-check">
+    <button type="submit">Run health check &amp; finish</button>
+  </form>
+
+{% elif project.onboarding_step == 'onboarding_complete' %}
+  <p class="warning">Onboarding complete — status: <strong>{{ project.status }}</strong>. Not yet reachable via HTTPS.</p>
+  <a href="/wizard/{{ project.id }}/dns-check">Phase 3: verify DuckDNS subdomain &amp; get a cert →</a>
+  <p><a href="/wizard/{{ project.id }}/summary">See what's been set up so far →</a></p>
+
+{% elif project.onboarding_step == 'dns_checked' %}
+  <p>DuckDNS subdomain <strong>{{ project.duckdns_subdomain }}.duckdns.org</strong> confirmed to resolve.</p>
+  <p><small>This step never touches VM 100 at all — it's a plain public DNS lookup from wherever this panel runs.</small></p>
+  <form method="post" action="/wizard/{{ project.id }}/certbot-start">
+    <button type="submit">Request certificate (certbot, automated DNS-01 via DuckDNS)</button>
+  </form>
+
+{% elif project.onboarding_step == 'cert_issued' %}
+  <p class="warning">Certificate issued for <strong>{{ project.duckdns_subdomain }}.duckdns.org</strong>.</p>
+  <p><small>On VM 100 (root-only, you'd need <code>sudo</code> to look): <code>/etc/letsencrypt/live/{{ project.duckdns_subdomain }}.duckdns.org/{fullchain.pem,privkey.pem}</code>. Next: <code>/etc/nginx/sites-available/{{ project.name }}</code> gets created and symlinked into <code>sites-enabled/</code>.</small></p>
+  <form method="post" action="/wizard/{{ project.id }}/nginx-install">
+    <button type="submit">Render &amp; install nginx site</button>
+  </form>
+
+{% elif project.onboarding_step == 'nginx_installed' %}
+  <p><small>nginx site is live at <code>/etc/nginx/sites-available/{{ project.name }}</code> → <code>sites-enabled/{{ project.name }}</code>.</small></p>
+  <form method="post" action="/wizard/{{ project.id }}/https-health-check">
+    <button type="submit">Run HTTPS health check &amp; finish</button>
+  </form>
+
+{% elif project.onboarding_step == 'https_live' %}
+  <p class="warning">Live at <a href="https://{{ project.duckdns_subdomain }}.duckdns.org" target="_blank">https://{{ project.duckdns_subdomain }}.duckdns.org</a> — status: <strong>{{ project.status }}</strong>.</p>
+  <a href="/wizard/{{ project.id }}/summary">Full deployment summary →</a>
+
+{% else %}
+  <p>Unrecognized step: {{ project.onboarding_step }}</p>
+{% endif %}
+
+<p><a href="/">Back to dashboard</a></p>
+{% endblock %}

@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}{{ project.name }} — {{ service }} logs{% endblock %}
+{% block content %}
+<h1>{{ project.name }} — <code>{{ service }}</code> logs</h1>
+<p style="color:var(--text-dim);">
+  Last 200 lines from <code>journalctl -u {{ service }}@{{ project.name }}</code> on {{ project.vm_ip }}.
+  Refreshes automatically every 4 seconds. Not a true streaming connection — this tool is a plain
+  request/response server, each refresh is its own bounded snapshot.
+</p>
+
+<div hx-get="/projects/{{ project.id }}/logs/{{ service }}/tail"
+     hx-trigger="load, every 4s"
+     hx-swap="innerHTML">
+  <pre id="log-content">Loading…</pre>
+</div>
+
+<p style="margin-top:1rem;"><a href="/projects/{{ project.id }}">&larr; Back to {{ project.name }}</a></p>
+{% endblock %}

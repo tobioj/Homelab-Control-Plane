@@ -1,0 +1,12 @@
+[Unit]
+Description=Control Panel — external uptime + cert-expiry prober (oneshot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=deploy
+WorkingDirectory=/home/deploy/control-panel
+ExecStart=/home/deploy/control-panel/venv/bin/python3 -m app.uptime
+StandardOutput=append:/home/deploy/control-panel/uptime.log
+StandardError=append:/home/deploy/control-panel/uptime.log

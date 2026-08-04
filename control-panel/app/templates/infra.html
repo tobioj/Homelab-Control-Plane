@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Infrastructure{% endblock %}
+{% block content %}
+<h1>VM 103 — this host</h1>
+<p style="color:var(--text-dim);">Read-only. This tool never manages these containers.</p>
+
+<div class="card">
+  <h2 style="margin-top:0;">Docker containers</h2>
+  <table>
+    <thead><tr><th>Container</th><th>Status</th></tr></thead>
+    <tbody>
+      {% for c in docker_containers %}
+      <tr><td>{{ c.name }}</td><td>{{ c.status }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

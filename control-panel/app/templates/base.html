@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{% block title %}Control Panel{% endblock %}</title>
+  <!-- Bump ?v= whenever style.css changes — browsers cache static files
+       aggressively even without explicit Cache-Control headers, and a
+       plain reload isn't guaranteed to re-fetch a changed stylesheet. -->
+  <link rel="stylesheet" href="/static/style.css?v=13">
+  <script src="https://unpkg.com/htmx.org@2.0.2" defer></script>
+  <script>
+    // Every <pre> (command output, stdout/stderr, live logs) auto-scrolls
+    // to its newest content by default — the operator reading a deploy
+    // log or a long stdout dump shouldn't have to manually scroll down
+    // every time, especially on the polled log viewer where new content
+    // keeps arriving above where they're reading.
+    function scrollAllPreToBottom() {
+      document.querySelectorAll('pre').forEach(function (el) {
+        el.scrollTop = el.scrollHeight;
+      });
+    }
+    document.addEventListener('DOMContentLoaded', scrollAllPreToBottom);
+
+    // The polled log viewer replaces its whole <pre> every few seconds.
+    // Blindly scrolling to the bottom on each swap (what we used to do)
+    // fought the operator the instant they scrolled UP to read earlier
+    // lines — the next poll yanked them straight back down. Instead: before
+    // each swap, remember per <pre id> whether they were pinned to the
+    // bottom (following the tail) and their exact scroll position; after the
+    // swap, follow the tail ONLY if they were pinned (or on the first swap,
+    // which has no saved state yet), otherwise restore where they were.
+    // Keyed by id so a rebuilt element is matched to its predecessor. Error
+    // fragments render <pre class='error'> with no id and are ignored.
+    var _preScroll = {};
+    var _PIN_SLOP = 40; // px from the bottom that still counts as "at the tail"
+    document.addEventListener('htmx:beforeSwap', function () {
+      document.querySelectorAll('pre[id]').forEach(function (el) {
+        _preScroll[el.id] = {
+          top: el.scrollTop,
+          pinned: el.scrollHeight - el.scrollTop - el.clientHeight <= _PIN_SLOP
+        };
+      });
+    });
+    document.addEventListener('htmx:afterSwap', function () {
+      document.querySelectorAll('pre[id]').forEach(function (el) {
+        var saved = _preScroll[el.id];
+        if (!saved || saved.pinned) {
+          el.scrollTop = el.scrollHeight;   // first swap or following the tail
+        } else {
+          el.scrollTop = saved.top;         // scrolled up to read — keep their place
+        }
+      });
+    });
+
+    // Reusable copy-to-clipboard for any button with data-copy set —
+    // used for deploy keys, CI keys, sudoers snippets, workflow YAML,
+    // anywhere the operator needs to paste a value elsewhere without
+    // manually selecting text out of a <pre> block.
+    function copyText(btn) {
+      var text = btn.getAttribute('data-copy');
+      navigator.clipboard.writeText(text).then(function () {
+        var original = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(function () { btn.textContent = original; }, 1500);
+      });
+    }
+
+    // Env-vars step: freely add/remove key+value rows (cloned from the
+    // inline <template id="envrow-tpl">) and one-click pull in a suggestion
+    // from the repo's .env.example. All buttons are type="button" so they
+    // never submit the form or trip the "Working…" submit handler below.
+    function addEnvRow(key, value) {
+      var tpl = document.getElementById('envrow-tpl');
+      var rows = document.getElementById('envvars-rows');
+      if (!tpl || !rows) return null;
+      rows.appendChild(tpl.content.cloneNode(true));
+      var row = rows.lastElementChild;
+      if (key) row.querySelector('.envvar-key').value = key;
+      if (value) row.querySelector('.envvar-value').value = value;
+      return row;
+    }
+    function removeEnvRow(btn) {
+      var row = btn.closest('.envvar-row');
+      if (row) row.remove();
+    }
+    function addSuggestion(btn) {
+      var key = btn.getAttribute('data-key');
+      var example = btn.getAttribute('data-example') || '';
+      var rows = document.getElementById('envvars-rows');
+      var existing = rows ? rows.querySelectorAll('input.envvar-key') : [];
+      for (var i = 0; i < existing.length; i++) {
+        if (existing[i].value === key) { existing[i].focus(); return; }  // already added
+      }
+      var row = addEnvRow(key, '');
+      if (row) {
+        var vi = row.querySelector('.envvar-value');
+        if (vi) { if (example) vi.placeholder = example; vi.focus(); }
+      }
+      btn.disabled = true;
+      btn.textContent = 'Added';
+    }
+
+    // Every form submit shows a loading state on the button that was
+    // clicked — most actions here are SSH round trips (pip install,
+    // clone, migrate...) that can take real time with zero visual
+    // feedback otherwise. Purely cosmetic: the browser's own full-page
+    // POST navigation is already underway regardless, this just stops the
+    // page from looking frozen/unresponsive while it waits. Also
+    // incidentally guards against an impatient double-click submitting
+    // the same form twice.
+    document.addEventListener('submit', function (e) {
+      // htmx-managed forms don't do a full-page navigation, so a "Working…"
+      // state set here would never be cleared by a page load — let htmx own
+      // their feedback (the .htmx-request class) instead.
+      if (e.target.matches && e.target.matches('[hx-post], [hx-get]')) return;
+      var btn = e.submitter || e.target.querySelector('button[type="submit"], button:not([type])');
+      if (btn && !btn.disabled) {
+        btn.setAttribute('data-orig-text', btn.textContent);
+        setTimeout(function () {
+          btn.disabled = true;
+          btn.textContent = 'Working…';
+        }, 0);
+      }
+    });
+    // Back/forward-cache fix: when the browser restores this page after a
+    // POST (clicking Back), buttons keep the disabled/"Working…" state they
+    // had when cached — leaving a permanently stuck "Working…" button. Reset
+    // any such button on pageshow so it's usable again.
+    window.addEventListener('pageshow', function () {
+      document.querySelectorAll('button[data-orig-text]').forEach(function (b) {
+        b.disabled = false;
+        b.textContent = b.getAttribute('data-orig-text');
+        b.removeAttribute('data-orig-text');
+      });
+    });
+  </script>
+</head>
+<body>
+  {% if user %}
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">Control Panel</div>
+      <nav>
+        <a href="/" class="{{ 'active' if request.url.path == '/' }}">Dashboard</a>
+        <a href="/ledger" class="{{ 'active' if '/ledger' in request.url.path }}">Redis Ledger</a>
+        <a href="/infra" class="{{ 'active' if '/infra' in request.url.path }}">VM 103 Infra</a>
+      </nav>
+      <div class="sidebar-footer">
+        <span class="whoami">{{ user.username }} ({{ user.role }})</span>
+        <a href="/account/password">Change password</a><br>
+        <a href="/logout">Log out</a>
+      </div>
+    </aside>
+    <div class="content-wrap">
+      <main>
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+  </div>
+  {% else %}
+  <main>
+  {{ self.content() }}
+  </main>
+  {% endif %}
+</body>
+</html>

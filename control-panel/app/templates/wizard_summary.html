@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Deployment summary{% endblock %}
+{% block content %}
+<h1>{{ project.name }} — deployment summary</h1>
+<p><small>Everything below is either straight from the database or a live check made right now — nothing here is assumed. SSH into {{ project.vm_ip }} and check any of these paths yourself if you want to see them directly.</small></p>
+
+{% if project.onboarding_step == 'https_live' %}
+<p class="warning">Live and public: <a href="{{ summary.public_url }}" target="_blank">{{ summary.public_url }}</a></p>
+{% else %}
+<p class="warning">Phase 1/2 complete, not yet reachable via HTTPS (Phase 3 not finished) — <a href="/wizard/{{ project.id }}/dns-check">continue Phase 3 →</a></p>
+{% endif %}
+
+<h2>Application</h2>
+<table>
+  <tbody>
+    <tr><td>Framework</td><td>{{ project.framework }}</td></tr>
+    <tr><td>Code on VM 100</td><td><code>{{ summary.app_dir }}/</code></td></tr>
+    <tr><td>Entrypoint</td><td><code>{{ project.wsgi_asgi_entrypoint }}</code></td></tr>
+    <tr><td>.env location</td><td><code>{{ summary.env_path }}</code> (mode 600)</td></tr>
+  </tbody>
+</table>
+
+<h2>Services</h2>
+<table>
+  <thead><tr><th>Service</th><th>Unit file</th><th>Live status</th></tr></thead>
+  <tbody>
+    {% for s in summary.services %}
+    <tr>
+      <td>{{ s.name }}</td>
+      <td><code>{{ s.unit_file }}</code></td>
+      <td class="status-{{ s.live_status }}">{{ s.live_status }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2>Redis</h2>
+<p><small>Runs on VM 103 (this machine), not VM 100 — every project's URL points back here.</small></p>
+<table>
+  <thead><tr><th>Index</th><th>Purpose</th><th>URL</th></tr></thead>
+  <tbody>
+    {% for r in summary.redis %}
+    <tr><td>/{{ r.index }}</td><td>{{ r.purpose }}</td><td><code>{{ r.url }}</code></td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2>DNS, nginx &amp; HTTPS</h2>
+{% if summary.dns_name %}
+<table>
+  <tbody>
+    <tr><td>DuckDNS name</td><td><code>{{ summary.dns_name }}</code></td></tr>
+    <tr><td>Resolves to (live check, just now)</td><td>{{ summary.dns_resolved_ip or 'does not resolve' }}</td></tr>
+    <tr><td>nginx site</td><td><code>{{ summary.nginx_site_path }}</code></td></tr>
+    <tr><td>nginx site enabled</td><td>{{ 'yes — symlinked into sites-enabled/' if summary.nginx_enabled else 'no' }}</td></tr>
+    <tr><td>Certificate (root-only on VM 100, you'll need <code>sudo</code> to look yourself)</td><td><code>{{ summary.cert_path }}</code></td></tr>
+    <tr><td>Certificate expires</td><td>{{ summary.cert_expiry_date or 'unknown — not captured at issuance' }}</td></tr>
+    {% if summary.https_reachable %}
+    <tr><td>HTTPS response (live check through nginx on {{ project.vm_ip }}, just now)</td><td>{{ summary.https_reachable }}</td></tr>
+    {% endif %}
+  </tbody>
+</table>
+{% else %}
+<p>No DuckDNS subdomain recorded yet — Phase 3 hasn't started.</p>
+{% endif %}
+
+<h2>How it connects</h2>
+<p><small>
+  {% if summary.dns_name %}Public request → DuckDNS resolves <code>{{ summary.dns_name }}</code> → your router forwards port 443 → nginx on {{ project.vm_ip }} terminates TLS using the cert above → proxies to the gunicorn unix socket <code>/run/gunicorn/{{ project.name }}.sock</code> → gunicorn runs the app from <code>{{ summary.app_dir }}/</code>, configured by <code>{{ summary.env_path }}</code>.{% else %}gunicorn serves the app directly over its unix socket <code>/run/gunicorn/{{ project.name }}.sock</code> — no nginx/TLS in front of it yet.{% endif %}
+  {% if project.uses_celery %}Celery worker{% if project.uses_celerybeat %} and beat{% endif %} connect to the same Redis broker index shown above, independently of the web request path.{% endif %}
+</small></p>
+
+<p><a href="/wizard/{{ project.id }}">← Back to onboarding status</a> · <a href="/">Dashboard</a></p>
+{% endblock %}

@@ -1,0 +1,13 @@
+[Unit]
+Description=Trigger for control-panel-ddns.service (DuckDNS A-record refresh)
+
+[Timer]
+# Every 5 minutes, matching the cadence of the old ~/duckdns/duck.sh cron on
+# VM 100 that this replaces for panel-managed projects. OnBootSec catches a
+# WAN-IP change that happened while VM 103 was down.
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

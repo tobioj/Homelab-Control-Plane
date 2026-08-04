@@ -1,0 +1,17 @@
+server {
+    listen 443 ssl;
+    server_name {{ duckdns_subdomain }}.duckdns.org;
+
+    ssl_certificate     /etc/letsencrypt/live/{{ duckdns_subdomain }}.duckdns.org/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{{ duckdns_subdomain }}.duckdns.org/privkey.pem;
+
+{% if framework == 'django' %}
+    location /static/ {
+        alias {{ app_dir }}/staticfiles/;
+    }
+{% endif %}
+    location / {
+        include proxy_params;
+        proxy_pass http://unix:/run/gunicorn/{{ project_name }}.sock;
+    }
+}

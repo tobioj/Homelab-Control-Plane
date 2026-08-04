@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Re-clone{% endblock %}
+{% block content %}
+<h1>{{ project.name }} — re-clone</h1>
+
+{% if not readiness.dir_exists %}
+<p>Nothing's cloned yet at <code>{{ readiness.path }}</code> — nothing to delete. <a href="/wizard/{{ project.id }}">Just clone from the status page →</a></p>
+{% else %}
+<p>This deletes <code>{{ readiness.path }}</code> on {{ project.vm_ip }} so you can clone again with a corrected repo URL or branch. Nothing else is touched — <code>.env</code> values, Redis allocation, and DuckDNS intent all stay recorded here in the panel.</p>
+{% if readiness.deps_were_installed %}
+<p class="warning">Dependencies were already installed for this project — the venv lives inside this same directory, so it gets deleted too. You'll need to re-run "Create venv &amp; install dependencies" after re-cloning.</p>
+{% endif %}
+<form method="post" action="/wizard/{{ project.id }}/reclone-confirm">
+  <button type="submit" class="btn-danger">Delete cloned code and re-clone</button>
+</form>
+{% endif %}
+
+<p><a href="/wizard/{{ project.id }}">← Back to onboarding status</a></p>
+{% endblock %}

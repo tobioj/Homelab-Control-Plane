@@ -1,0 +1,32 @@
+# Shared TEMPLATE unit (%i = application name).
+#
+# This is the original, hand-written unit that pre-dated the control panel. It is
+# deliberately never modified by the tool: apps onboarded through the panel get a
+# generated CONCRETE unit instead (see gunicorn@app-alpha.service), and systemd
+# resolves an exact filename match before falling back to this template. That makes
+# the panel's additions purely additive.
+#
+# RuntimeDirectoryPreserve=yes is MANDATORY. Without it, systemd removes
+# /run/gunicorn on stop -- which deletes the sockets of every OTHER app sharing
+# that runtime directory. Omitting it caused a real multi-app outage.
+
+[Unit]
+Description=gunicorn for %i
+After=network.target
+
+[Service]
+User=deploy
+Group=www-data
+RuntimeDirectory=gunicorn
+RuntimeDirectoryPreserve=yes
+WorkingDirectory=/srv/apps/%i
+EnvironmentFile=/srv/apps/%i/.env
+ExecStart=/srv/apps/%i/venv/bin/gunicorn \
+  --workers 2 --worker-class gthread --threads 2 \
+  --bind unix:/run/gunicorn/%i.sock --timeout 120 \
+  config.wsgi:application
+ExecReload=/bin/kill -s HUP $MAINPID
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

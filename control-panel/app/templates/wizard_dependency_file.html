@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Dependency file?{% endblock %}
+{% block content %}
+<h1>{{ project.name }} — choose dependency file</h1>
+
+{% if candidates %}
+<p>Found the following under <code>/srv/apps/{{ project.name }}</code> (up to 2 directory levels deep):</p>
+<form method="post" action="/wizard/{{ project.id }}/dependency-file">
+  {% for c in candidates %}
+  <label><input type="radio" name="dependency_file" value="{{ c }}" {% if loop.first %}checked{% endif %}> <code>{{ c }}</code></label><br>
+  {% endfor %}
+  <label><input type="radio" name="dependency_file" value="__custom__"> Other path: <input type="text" name="custom_path" placeholder="e.g. requirements/dev.txt"></label>
+  <button type="submit">Use this one</button>
+</form>
+{% else %}
+<p class="error">Nothing matching pyproject.toml / requirements*.txt found automatically. Enter the path manually (relative to the repo root):</p>
+<form method="post" action="/wizard/{{ project.id }}/dependency-file">
+  <input type="hidden" name="dependency_file" value="__custom__">
+  <input type="text" name="custom_path" required placeholder="e.g. backend/requirements.txt">
+  <button type="submit">Use this path</button>
+</form>
+{% endif %}
+{% endblock %}

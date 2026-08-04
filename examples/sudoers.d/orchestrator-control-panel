@@ -1,0 +1,89 @@
+# /etc/sudoers.d/orchestrator-control-panel
+#
+# The complete privilege grant for the control plane's orchestrator account on the
+# application host. This is an allowlist: everything not named here requires an
+# interactive password, which unattended automation cannot supply.
+#
+# What is deliberately NOT granted: a root shell, arbitrary cp/mv/rm, package
+# installation, editing sudoers, or any read access to /etc/letsencrypt.
+#
+# IMPORTANT -- why this file is not sufficient on its own:
+# a sudoers rule can only pattern-match a command string. "systemctl stop
+# gunicorn@*" matches EVERY application, including production. A wildcard cannot
+# express "all except the important one". So the control panel enforces a second,
+# independent authorisation layer in application code (app/safety.py) that refuses
+# protected applications before a command is ever constructed. Neither layer is
+# redundant: this one bounds what is possible, that one bounds what is intended.
+#
+# Install with `visudo -f` so a syntax error can't lock you out.
+
+Defaults:deploy    env_reset
+
+# ---------------------------------------------------------------------------
+# Service lifecycle, scoped per application family
+# ---------------------------------------------------------------------------
+deploy ALL=(ALL) NOPASSWD: /usr/bin/systemctl start gunicorn@*
+deploy ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop gunicorn@*
+deploy ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart gunicorn@*
+deploy ALL=(ALL) NOPASSWD: /usr/bin/systemctl enable gunicorn@*
+deploy ALL=(ALL) NOPASSWD: /usr/bin/systemctl disable gunicorn@*
+deploy ALL=(ALL) NOPASSWD: /usr/bin/systemctl status gunicorn@*
+
+deploy ALL=(ALL) NOPASSWD: /usr/bin/systemctl start celery@*
+deploy ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop celery@*
+deploy ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart celery@*
+deploy ALL=(ALL) NOPASSWD: /usr/bin/systemctl enable celery@*
+deploy ALL=(ALL) NOPASSWD: /usr/bin/systemctl disable celery@*
+deploy ALL=(ALL) NOPASSWD: /usr/bin/systemctl status celery@*
+
+deploy ALL=(ALL) NOPASSWD: /usr/bin/systemctl start celerybeat@*
+deploy ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop celerybeat@*
+deploy ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart celerybeat@*
+deploy ALL=(ALL) NOPASSWD: /usr/bin/systemctl enable celerybeat@*
+deploy ALL=(ALL) NOPASSWD: /usr/bin/systemctl disable celerybeat@*
+deploy ALL=(ALL) NOPASSWD: /usr/bin/systemctl status celerybeat@*
+
+deploy ALL=(ALL) NOPASSWD: /usr/bin/systemctl daemon-reload
+
+# ---------------------------------------------------------------------------
+# Installing generated files: write-then-privileged-copy
+#
+# The orchestrator cannot write into system directories. It writes to a staging
+# directory it owns, and sudo permits cp ONLY from that exact path. The privileged
+# operation is therefore a fixed-shape copy, never an arbitrary write -- and the
+# content is reviewable on disk before it is installed.
+# ---------------------------------------------------------------------------
+deploy ALL=(ALL) NOPASSWD: /usr/bin/cp /home/deploy/.cp-staging/*.service /etc/systemd/system/*.service
+deploy ALL=(ALL) NOPASSWD: /usr/bin/cp /home/deploy/.cp-staging/*.conf    /etc/nginx/sites-available/*
+deploy ALL=(ALL) NOPASSWD: /usr/bin/ln -sf /etc/nginx/sites-available/* /etc/nginx/sites-enabled/*
+deploy ALL=(ALL) NOPASSWD: /usr/bin/rm -f /etc/nginx/sites-enabled/*
+
+# ---------------------------------------------------------------------------
+# Proxy validation and reload
+#
+# Validation is granted separately from reload so a generated config can always be
+# tested before it is made live. Commands that enable a site then validate must
+# also self-clean on failure -- a plain && chain leaves a broken symlink that
+# blocks reloads for every OTHER application. See docs/DESIGN-DECISIONS.md.
+# ---------------------------------------------------------------------------
+deploy ALL=(ALL) NOPASSWD: /usr/sbin/nginx -t
+deploy ALL=(ALL) NOPASSWD: /usr/bin/systemctl reload nginx
+
+# ---------------------------------------------------------------------------
+# Certificates
+#
+# Issuance and deletion only. Notably absent: any way to READ /etc/letsencrypt.
+# It is root-only 0700, so the orchestrator cannot even test whether a certificate
+# file exists -- which is why the panel tracks expiry from certbot's own stdout at
+# issuance time instead of probing the filesystem. See docs/INCIDENTS.md #7.
+# ---------------------------------------------------------------------------
+deploy ALL=(ALL) NOPASSWD: /usr/bin/certbot certonly *
+deploy ALL=(ALL) NOPASSWD: /usr/bin/certbot delete *
+
+# ---------------------------------------------------------------------------
+# Cleanup of generated artefacts on decommission
+# ---------------------------------------------------------------------------
+deploy ALL=(ALL) NOPASSWD: /usr/bin/rm -f /etc/systemd/system/gunicorn@*.service
+deploy ALL=(ALL) NOPASSWD: /usr/bin/rm -f /etc/systemd/system/celery@*.service
+deploy ALL=(ALL) NOPASSWD: /usr/bin/rm -f /etc/systemd/system/celerybeat@*.service
+deploy ALL=(ALL) NOPASSWD: /usr/bin/rm -f /etc/nginx/sites-available/*

@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Health check{% endblock %}
+{% block content %}
+<h1>{{ project.name }} — health check</h1>
+<p>Real checks, not just <code>systemctl is-active</code> (brief §4 bug #10) — judge for yourself whether this actually looks healthy.</p>
+<table>
+  <tbody>
+    {% for key, value in checks.items() %}
+    <tr><td>{{ key }}</td><td><pre>{{ value }}</pre></td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% if project.onboarding_step == 'https_live' %}
+<p class="warning">Live at <a href="https://{{ project.duckdns_subdomain }}.duckdns.org" target="_blank">https://{{ project.duckdns_subdomain }}.duckdns.org</a> — project status is now <strong>{{ project.status }}</strong>.</p>
+{% else %}
+<p class="warning">Onboarding marked complete — project status is now <strong>{{ project.status }}</strong>. Not yet reachable via HTTPS — continue with Phase 3 (DuckDNS + certbot) below.</p>
+<p><a href="/wizard/{{ project.id }}/dns-check" class="btn-small">Continue to Phase 3: DNS check &rarr;</a></p>
+{% endif %}
+<p><a href="/wizard/{{ project.id }}">&larr; Back to {{ project.name }} onboarding</a> · <a href="/projects/{{ project.id }}">Project hub</a> · <a href="/">Dashboard</a></p>
+{% endblock %}

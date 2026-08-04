@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Entrypoint?{% endblock %}
+{% block content %}
+<h1>{{ project.name }} — WSGI/ASGI entrypoint</h1>
+<p>The module:attribute gunicorn should serve, relative to <code>{{ project.app_subdir or '(repo root)' }}</code>.</p>
+{% if project.framework == 'django' %}
+<p>For Django this is almost always <code>config.wsgi:application</code> (or whatever your settings package is named instead of <code>config</code>) — check <code>{{ project.app_subdir }}/manage.py</code> if unsure, it names the settings module right at the top.</p>
+{% elif project.framework == 'fastapi' %}
+<p>For FastAPI this is typically <code>main:app</code> — the file defining <code>app = FastAPI()</code>, and the variable name.</p>
+{% endif %}
+<p><small>On VM 100: <code>/srv/apps/{{ project.name }}/{{ project.app_subdir + '/' if project.app_subdir else '' }}</code> — check that directory over SSH to see the real files if you're unsure.</small></p>
+<form method="post" action="/wizard/{{ project.id }}/entrypoint">
+  <input type="text" name="entrypoint" required placeholder="{{ 'config.wsgi:application' if project.framework == 'django' else 'main:app' }}">
+  <button type="submit">Continue</button>
+</form>
+{% endblock %}

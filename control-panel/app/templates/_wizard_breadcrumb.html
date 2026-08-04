@@ -1,0 +1,51 @@
+{# Shared across wizard step templates — expects `project` in context.
+   Completed steps are clickable (form: revisit the GET form; action: redo
+   the idempotent POST directly; reclone: dedicated redo-with-delete page).
+   Grouped into Phase 1/2/3 sections (WIZARD_PHASES) purely for display —
+   step ordering/gating logic elsewhere never looks at this grouping.
+
+   current_idx = the step that JUST completed (its name literally equals
+   project.onboarding_step) — NOT the step still to do. The step at
+   current_idx + 1 is what's actually "current" (the next actionable
+   thing). Real bug fixed here: the old version treated current_idx itself
+   as "current" (grayed out, no redo link) and never visually distinguished
+   the actual next step from the ones after it — the just-finished step
+   looked unfinished, and there was no visual cue for "click this next." #}
+{% set current_idx = WIZARD_STEP_NAMES.index(project.onboarding_step) if project.onboarding_step in WIZARD_STEP_NAMES else -1 %}
+{% for phase_start_idx, phase_label in WIZARD_PHASES %}
+  {% set phase_end_idx = WIZARD_PHASES[loop.index0 + 1][0] if not loop.last else WIZARD_STEPS|length %}
+  {% set phase_done = current_idx >= phase_end_idx - 1 %}
+  <div class="wizard-phase-group">
+    <h4 class="{{ 'step-done' if phase_done else ('step-current' if current_idx + 1 >= phase_start_idx and current_idx + 1 < phase_end_idx else 'step-pending') }}">
+      {{ phase_label }}{% if phase_done %} ✓{% endif %}
+    </h4>
+    <div class="wizard-breadcrumb">
+      {% for step_name, label, kind, route in WIZARD_STEPS[phase_start_idx:phase_end_idx] %}
+        {% set step_idx = phase_start_idx + loop.index0 %}
+        {%- if step_idx <= current_idx and kind == 'form' %}
+          <span class="step-done"><a href="/wizard/{{ project.id }}/{{ route }}">{{ label }}</a></span>
+        {%- elif step_idx <= current_idx and kind == 'action' %}
+          <form method="post" action="/wizard/{{ project.id }}/{{ route }}" style="display:inline">
+            <button type="submit" class="btn-small" title="Safe to re-run — this action is idempotent">{{ label }} (redo)</button>
+          </form>
+        {%- elif step_idx <= current_idx and kind == 'reclone' %}
+          <span class="step-done"><a href="/wizard/{{ project.id }}/reclone">{{ label }} (redo)</a></span>
+        {%- elif step_idx <= current_idx and kind == 'redis' %}
+          <span class="step-done"><a href="/wizard/{{ project.id }}/services-redis">{{ label }}</a></span>
+        {%- elif step_idx <= current_idx %}
+          <span class="step-done">{{ label }} ✓</span>
+        {%- elif step_idx == current_idx + 1 and kind == 'form' %}
+          <a href="/wizard/{{ project.id }}/{{ route }}" class="step-current" style="font-weight:700;">{{ label }} (next →)</a>
+        {%- elif step_idx == current_idx + 1 %}
+          {# action/redis/reclone/None kind steps are POST-only or shown
+             inline on wizard_status.html's own content below — no GET
+             page to link to here, just highlight it as what's next. #}
+          <span class="step-current" style="font-weight:700;">{{ label }} (next — see below)</span>
+        {%- else %}
+          <span class="step-pending">{{ label }}</span>
+        {%- endif %}
+        {%- if not loop.last %} <span class="step-pending">→</span> {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+{% endfor %}

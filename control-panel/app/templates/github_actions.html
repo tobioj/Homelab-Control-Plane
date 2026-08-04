@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}{{ project.name }} — GitHub Actions{% endblock %}
+{% block content %}
+<h1>{{ project.name }} — GitHub Actions deploy workflow</h1>
+<p style="color:var(--text-dim);">
+  Not automated end to end — this tool never calls GitHub's API on your behalf. It generates the workflow file
+  and a dedicated CI key for you to wire up yourself: add the YAML to your repo, add the private key as a
+  GitHub Actions secret named <code>SSH_PRIVATE_KEY</code>.
+</p>
+
+{% if ci_key_result %}
+<div class="card" style="border-color:var(--warning);">
+  <h2 style="margin-top:0;" class="warning">CI key generated — copy this now, it will not be shown again</h2>
+  <p>This private key has already been deleted from VM 100's disk. This app does not store it anywhere. If you lose this, generate a new one.</p>
+  <p><strong>1. Add this as a GitHub Actions repo secret named <code>SSH_PRIVATE_KEY</code>:</strong></p>
+  <pre>{{ ci_key_result.private_key }}</pre>
+  <button type="button" class="btn-small" data-copy="{{ ci_key_result.private_key }}" onclick="copyText(this)">Copy</button>
+  <p><strong>2. Its public half is already trusted on VM 100 (appended to <code>~/.ssh/authorized_keys</code>):</strong></p>
+  <pre>{{ ci_key_result.public_key }}</pre>
+  <button type="button" class="btn-small" data-copy="{{ ci_key_result.public_key }}" onclick="copyText(this)">Copy</button>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2 style="margin-top:0;">1. Generate a dedicated CI key</h2>
+  <p><small>Separate from the deploy key (repo-read-only, used for cloning) and this app's own orchestrator key — three distinct keys, three distinct purposes.</small></p>
+  <form method="post" action="/projects/{{ project.id }}/github-actions/ci-key">
+    <input type="hidden" name="external_host" value="{{ external_host }}">
+    <input type="hidden" name="external_port" value="{{ external_port }}">
+    <button type="submit" class="btn-danger">Generate CI key</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">2. Add this sudoers rule on VM 100</h2>
+  <p><small>This app never edits <code>/etc/sudoers.d/</code> itself, on either VM, for anything — add this yourself via <code>sudo visudo</code> or a new file under <code>/etc/sudoers.d/</code>. Scoped to only this project's own units, never widen an existing rule.</small></p>
+  <pre>{{ sudoers_snippet }}</pre>
+  <button type="button" class="btn-small" data-copy="{{ sudoers_snippet }}" onclick="copyText(this)">Copy</button>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">3. Generate the workflow file</h2>
+  <form method="get" action="/projects/{{ project.id }}/github-actions">
+    <label>External host (whatever your router forwards to VM 100 — e.g. your DuckDNS domain)
+      <input type="text" name="external_host" value="{{ external_host }}" placeholder="e.g. yourname.duckdns.org">
+    </label><br>
+    <label>External SSH port (whatever your router forwards to VM 100's port 22 — do not assume it's 22)
+      <input type="number" name="external_port" value="{{ external_port }}">
+    </label><br>
+    <button type="submit">Generate</button>
+  </form>
+
+  {% if workflow_yaml %}
+  <p style="margin-top:1rem;"><small>Save this as <code>.github/workflows/deploy.yml</code> in your repo:</small></p>
+  <pre>{{ workflow_yaml }}</pre>
+  <button type="button" class="btn-small" data-copy="{{ workflow_yaml }}" onclick="copyText(this)">Copy</button>
+  {% endif %}
+</div>
+
+<p><a href="/projects/{{ project.id }}">&larr; Back to {{ project.name }}</a></p>
+{% endblock %}

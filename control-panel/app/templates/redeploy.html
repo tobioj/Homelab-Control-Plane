@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Redeploy {{ project.name }}{% endblock %}
+{% block content %}
+<h1>Redeploy {{ project.name }}</h1>
+<p style="color:var(--text-dim);">Pull the latest <code>{{ project.branch }}</code>, reinstall dependencies{% if project.framework == 'django' %}, run migrations &amp; collectstatic{% endif %}, and restart services on {{ project.vm_ip }}.</p>
+
+<div class="card">
+  <h2 style="margin-top:0;">Incoming commits</h2>
+  <p><small>What a <code>git pull</code> would bring in (fetched read-only just now — nothing has changed yet):</small></p>
+  <pre>{{ incoming }}</pre>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Exact command</h2>
+  <p><small>This runs over SSH as <code>{{ user.username }}</code> after you confirm on the next screen:</small></p>
+  <pre class="command">{{ command }}</pre>
+</div>
+
+<form method="post" action="/projects/{{ project.id }}/redeploy" style="display:inline">
+  <button type="submit" class="btn-danger">Prepare redeploy →</button>
+</form>
+<a href="/projects/{{ project.id }}" class="btn-small">Cancel</a>
+<p><small>The next screen shows this same command once more with a final Confirm &amp; execute button — same preview→confirm as every other action.</small></p>
+{% endblock %}

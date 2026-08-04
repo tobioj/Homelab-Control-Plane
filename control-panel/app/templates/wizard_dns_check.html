@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}DNS check{% endblock %}
+{% block content %}
+<h1>{{ project.name }} — verify DuckDNS subdomain resolves</h1>
+<p>Intended subdomain: <strong>{{ project.duckdns_subdomain }}.duckdns.org</strong></p>
+<p>Before starting certbot, this does a real DNS lookup — never trusts a <code>duck.sh</code> "OK" response alone, since that returns OK even for a subdomain that was never actually created (brief §4 bug #5). If it doesn't resolve yet, create it on <a href="https://www.duckdns.org" target="_blank">duckdns.org</a> yourself first (subdomain creation has no API), then check again.</p>
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+<form method="post" action="/wizard/{{ project.id }}/dns-check">
+  <button type="submit">Check DNS now</button>
+</form>
+{% endblock %}

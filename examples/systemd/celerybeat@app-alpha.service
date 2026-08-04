@@ -1,0 +1,32 @@
+# Generated CONCRETE unit, rendered per application by the control panel.
+#
+# Two details that are easy to get wrong:
+#
+# 1. --scheduler django_celery_beat... is framework-gated. That scheduler ships
+#    with a Django package; rendering it into a non-Django unit produces a service
+#    that cannot start at all.
+#
+# 2. The database-backed scheduler polls Postgres continuously (default max
+#    interval: 5 seconds). Against a serverless database that bills by compute-time
+#    and autosuspends when idle, that poll is what keeps it awake -- and exhausts
+#    the compute quota. See docs/INCIDENTS.md #9. Raise --max-interval so the
+#    database can suspend between checks; the cost is that schedule edits take up
+#    to that long to be noticed.
+
+[Unit]
+Description=celery beat for app-alpha
+After=network.target
+
+[Service]
+User=deploy
+Group=www-data
+WorkingDirectory=/srv/apps/app-alpha
+EnvironmentFile=/srv/apps/app-alpha/.env
+ExecStart=/srv/apps/app-alpha/venv/bin/celery -A config beat \
+  --loglevel=info \
+  --scheduler django_celery_beat.schedulers:DatabaseScheduler \
+  --max-interval 3600
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}DuckDNS subdomain{% endblock %}
+{% block content %}
+<h1>{{ project.name }} — intended DuckDNS subdomain</h1>
+<p>Not created yet — that's Phase 3, and it's a manual step you'll do yourself on DuckDNS. This just records the <em>intended</em> name now so <code>ALLOWED_HOSTS</code> is correct from the start (brief §4 bug #3 — a stale/placeholder host caused a confusing 400 once already).</p>
+<p><small>Once Phase 3 actually runs, this subdomain determines two real paths on VM 100: the cert at <code>/etc/letsencrypt/live/&lt;subdomain&gt;.duckdns.org/</code> and the nginx site at <code>/etc/nginx/sites-available/{{ project.name }}</code>.</small></p>
+<form method="post" action="/wizard/{{ project.id }}/subdomain">
+  <input type="text" name="subdomain" required placeholder="e.g. demo-repo">
+  <span>.duckdns.org</span>
+  <button type="submit">Save</button>
+</form>
+{% endblock %}

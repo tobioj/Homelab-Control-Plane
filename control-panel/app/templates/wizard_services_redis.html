@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Services & Redis{% endblock %}
+{% block content %}
+<h1>{{ project.name }} — services &amp; Redis</h1>
+
+{% if project.redis_broker_index is not none %}
+<p class="warning">Already allocated: broker <code>/{{ project.redis_broker_index }}</code>{% if project.redis_cache_index != project.redis_broker_index %}, cache <code>/{{ project.redis_cache_index }}</code>{% endif %} — celery: <strong>{{ project.uses_celery|int }}</strong>, beat: <strong>{{ project.uses_celerybeat|int }}</strong>{% if project.uses_celery %}, celery app: <code>{{ project.celery_app or 'config' }}</code>{% endif %}.</p>
+<p>To change these, the current indices need to be freed first — they'll go back to the ledger as available, and you'll pick fresh ones below. If <code>.env</code> was already written with the old values, you'll need to re-run that step afterward.</p>
+<form method="post" action="/wizard/{{ project.id }}/services-redis/free">
+  <button type="submit" class="btn-danger">Free current indices and reconfigure</button>
+</form>
+{% else %}
+<p>gunicorn/uvicorn is always required and isn't asked here. Celery worker and beat are independently optional.</p>
+<form method="post" action="/wizard/{{ project.id }}/services-redis">
+  <label><input type="checkbox" name="uses_celery" value="1"> Celery worker</label><br>
+  <label><input type="checkbox" name="uses_celerybeat" value="1"> Celery beat (requires the worker above — exactly one instance, ever)</label><br>
+  <label><input type="checkbox" name="separate_cache_index" value="1"> Separate Redis index for cache (unchecked = share the broker's index for cache too)</label>
+  <div class="card" style="margin-top:0.8rem;">
+    <label style="display:block;">Celery app module (the <code>-A</code> argument) — only used if Celery is enabled above
+      <input type="text" name="celery_app" value="config" placeholder="config (Django) · app.worker or worker:celery (FastAPI)" style="display:block; width:100%; max-width:28rem; margin-top:0.3rem; box-sizing:border-box;">
+    </label>
+    <p><small>Django projects almost always use <code>config</code>. For FastAPI, this is the module (or <code>module:attr</code>) where your <code>Celery()</code> instance lives — we don't guess it.</small></p>
+  </div>
+  <p><small>Indices are allocated fresh from the ledger — never hand-typed. See <a href="/ledger">the ledger</a> for what's already in use.</small></p>
+  <button type="submit">Allocate &amp; continue</button>
+</form>
+{% endif %}
+{% endblock %}

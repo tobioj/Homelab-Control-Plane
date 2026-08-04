@@ -1,0 +1,25 @@
+# Generated CONCRETE unit, rendered per application by the control panel.
+#
+# The -A target is a per-app database column, not a hardcoded value: a Django
+# project uses "config", while another framework's app may use "app.worker" or
+# "worker:celery". Hardcoding it silently broke non-Django Celery.
+#
+# This unit needs only Redis to start, which is why during a database outage the
+# worker stays healthy while celerybeat (database-backed) crash-loops. That
+# asymmetry made a database outage look like a scheduler bug.
+
+[Unit]
+Description=celery worker for app-alpha
+After=network.target
+
+[Service]
+User=deploy
+Group=www-data
+WorkingDirectory=/srv/apps/app-alpha
+EnvironmentFile=/srv/apps/app-alpha/.env
+ExecStart=/srv/apps/app-alpha/venv/bin/celery -A config worker \
+  --loglevel=info --concurrency=2
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

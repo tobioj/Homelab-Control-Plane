@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Action result{% endblock %}
+{% block content %}
+<h1>Action {{ action.status }}</h1>
+
+{% if interpreted_error %}
+<p class="error">{{ interpreted_error.message }}</p>
+{% if retry_branches %}
+<p>Real branches on this repo:</p>
+<form method="post" action="/wizard/{{ project.id }}/retry-clone">
+  <select name="branch">
+    {% for b in retry_branches %}
+    <option value="{{ b }}">{{ b }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit">Retry clone with this branch</button>
+</form>
+{% endif %}
+{% endif %}
+
+<p><code>{{ action.command }}</code> on <code>{{ action.target_host }}</code></p>
+<p>Exit code: <strong>{{ action.exit_code }}</strong></p>
+{% if action.stdout %}<h3>stdout</h3><pre>{{ action.stdout }}</pre><button type="button" class="btn-small" data-copy="{{ action.stdout }}" onclick="copyText(this)">Copy</button>{% endif %}
+{% if action.stderr %}<h3>stderr</h3><pre>{{ action.stderr }}</pre><button type="button" class="btn-small" data-copy="{{ action.stderr }}" onclick="copyText(this)">Copy</button>{% endif %}
+
+<p>
+  {% if project %}
+    <a href="/projects/{{ project.id }}">&larr; Back to {{ project.name }}</a>
+    {% if action.action_type.startswith('onboarding') %} · <a href="/wizard/{{ project.id }}">Continue onboarding</a>{% endif %}
+    ·
+  {% endif %}
+  <a href="/">Back to dashboard</a>
+</p>
+{% endblock %}

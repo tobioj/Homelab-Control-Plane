@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Where's the project?{% endblock %}
+{% block content %}
+<h1>{{ project.name }} — where's the project?</h1>
+<p>No automatic search — a repo can hold more than one project, so only you know which folder is the right one.</p>
+<p><small>On VM 100: the repo is already cloned to <code>/srv/apps/{{ project.name }}/</code> — SSH in and look around if you're not sure what to enter here.</small></p>
+<form method="post" action="/wizard/{{ project.id }}/locate">
+  <div class="card" style="margin-bottom:1rem;">
+    <label style="display:block; margin-bottom:0.4rem;">Project subdirectory, relative to the repo root — leave blank if the app lives at the repo root itself
+      <input type="text" name="app_subdir" placeholder="e.g. backend" style="display:block; width:100%; max-width:28rem; margin-top:0.3rem; box-sizing:border-box;">
+    </label>
+    <p><small>Typing here always wins over the pick below, if non-empty.</small></p>
+  </div>
+
+  {% if directories %}
+  <div class="card" style="margin-bottom:1rem;">
+    <p style="margin-top:0;">Or pick from real folders found in the cloned repo (only top two levels shown):</p>
+    <label><input type="radio" name="app_subdir_pick" value="" checked> (repo root itself)</label><br>
+    {% for d in directories %}
+    <label><input type="radio" name="app_subdir_pick" value="{{ d }}"> <code>{{ d }}</code></label><br>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <label><input type="radio" name="framework" value="django" required> Django</label><br>
+  <label><input type="radio" name="framework" value="fastapi"> FastAPI</label>
+  <p><small>Django (WSGI) and FastAPI (ASGI/uvicorn) are supported. Other frameworks can't get a reliable auto-generated systemd ExecStart yet.</small></p>
+  <button type="submit">Continue</button>
+</form>
+{% endblock %}

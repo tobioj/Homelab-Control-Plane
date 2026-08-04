@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+{% block title %}{{ project.name }}{% endblock %}
+{% block content %}
+<div style="display:flex; align-items:center; gap:0.75rem;">
+  <h1 style="margin-bottom:0;">{{ project.name }}</h1>
+  {% if project.onboarding_step == 'https_live' %}<span class="tag-live">LIVE</span>{% endif %}
+  {% if project.is_live %}<span class="tag-prod" title="Tagged production-critical — extra warning shown before destructive actions">PROD</span>{% endif %}
+</div>
+<p style="color:var(--text-dim); margin-top:0.25rem;">
+  {{ project.framework }} &middot; {{ project.vm_ip }} &middot; status: {{ project.status }}
+  {% if project.onboarding_step and project.status == 'draft' %} &middot; onboarding: {{ project.onboarding_step }}{% endif %}
+</p>
+
+{% if project.duckdns_subdomain %}
+  {% if project.onboarding_step == 'https_live' %}
+  <p><a href="https://{{ project.duckdns_subdomain }}.duckdns.org" target="_blank">https://{{ project.duckdns_subdomain }}.duckdns.org</a></p>
+  {% else %}
+  <p class="warning">{{ project.duckdns_subdomain }}.duckdns.org — not live yet</p>
+  {% endif %}
+{% endif %}
+
+<div class="card">
+  <h2 style="margin-top:0;">Services</h2>
+  <table>
+    <thead><tr><th>Service</th><th>Status</th><th>Memory</th><th>Restarts</th><th>Uptime</th><th></th>{% if user.role == 'admin' %}<th></th>{% endif %}</tr></thead>
+    <tbody>
+      {% for label in service_labels %}
+      {% set m = project.metrics.get(label, {}) %}
+      <tr>
+        <td>{{ label }}</td>
+        <td><span class="status-{{ m.get('status', 'n/a') }}">{{ m.get('status', 'n/a') }}</span>{% if m.get('sub') and m.get('sub') not in ('running', 'exited', '') %} <small class="muted">({{ m.sub }})</small>{% endif %}</td>
+        <td>{{ m.get('mem', 'n/a') }}</td>
+        <td>{{ m.get('restarts', '—') }}</td>
+        <td>{{ m.get('uptime', '—') }}</td>
+        <td><a href="/projects/{{ project.id }}/logs/{{ label }}" class="btn-small">logs</a></td>
+        {% if user.role == 'admin' %}
+        <td>
+          <form hx-post="/projects/{{ project.id }}/restart/{{ label }}" hx-target="#svc-banner" hx-swap="innerHTML" class="inline-form">
+            <button type="submit" class="btn-small">restart</button>
+          </form>
+        </td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <div id="svc-banner"></div>
+  {% if grafana_url %}<p style="margin-bottom:0;"><a href="{{ grafana_url }}" target="_blank" class="btn-small">Search logs in Grafana →</a></p>{% endif %}
+</div>
+
+{% if user.role == 'admin' %}
+<div class="card card-actions">
+  <h2 style="margin-top:0;">Actions</h2>
+  {% if project.status == 'running' %}
+    {% if project.name not in ['primary-store'] %}
+    <div class="action-item">
+      <a href="/projects/{{ project.id }}/redeploy" class="btn-small btn-primary">redeploy →</a>
+      <span class="action-help">Ship the latest code. Pulls new commits from GitHub, reinstalls dependencies{% if project.framework == 'django' %}, runs migrations &amp; collectstatic{% endif %}, and restarts services. Use this whenever you've pushed changes — the running site keeps serving the old code until you do.</span>
+    </div>
+    {% endif %}
+    <div class="action-item">
+      <form method="post" action="/lifecycle/{{ project.name }}/preview-pause" class="inline-form"><button type="submit" class="btn-small">pause</button></form>
+      <span class="action-help">Temporarily stop &amp; disable every service — the site goes offline (502). Nginx, the certificate, Redis indices, code, and data are all left untouched. Fully reversible with <em>resume</em>. Good for maintenance or freeing resources briefly.</span>
+    </div>
+    <div class="action-item">
+      <form method="post" action="/decommission/{{ project.name }}/preview-stop" class="inline-form"><button type="submit" class="btn-small">decommission</button></form>
+      <span class="action-help">Full shutdown: stops &amp; disables services, unlinks the nginx site, and frees this project's Redis indices back to the ledger. The code, <code>.env</code>, cert, and this panel's record all remain — you can bring it back with <em>recommission</em>. This is the graceful "take it offline for good, but keep the option to return" step.</span>
+    </div>
+  {% elif project.status == 'paused' %}
+    <div class="action-item">
+      <form method="post" action="/lifecycle/{{ project.name }}/preview-resume" class="inline-form"><button type="submit" class="btn-small btn-primary">resume</button></form>
+      <span class="action-help">Re-enable and start every service, bringing the paused project straight back to running and reachable.</span>
+    </div>
+    <div class="action-item">
+      <form method="post" action="/decommission/{{ project.name }}/preview-stop" class="inline-form"><button type="submit" class="btn-small">decommission</button></form>
+      <span class="action-help">Full shutdown (stops services, unlinks nginx, frees Redis) — keeps files/cert/record so it can be recommissioned later.</span>
+    </div>
+  {% elif project.status == 'decommissioned' %}
+    <p class="action-help" style="margin-top:0;">This project is decommissioned — offline, but this panel still remembers it. Bring it back with <em>recommission</em>, or clean it up permanently step by step below.</p>
+    <div class="action-item">
+      <span class="inline-form"><a href="/lifecycle/{{ project.name }}/recommission" class="btn-small btn-primary">recommission</a></span>
+      <span class="action-help">Bring it back to running — re-links nginx, reclaims (or reallocates) its Redis indices, and starts services again. Only works while the files &amp; nginx site are still present.</span>
+    </div>
+    <div class="action-item">
+      <form method="post" action="/decommission/{{ project.name }}/preview-delete-files" class="inline-form"><button type="submit" class="btn-small">delete files</button></form>
+      <span class="action-help">Permanently delete <code>/srv/apps/{{ project.name }}/</code> from VM 100 — the cloned code, the venv, and the <code>.env</code> with its real secrets. <strong>Not recoverable.</strong> After this, recommission is no longer possible.</span>
+    </div>
+    {% if project.cert_expiry_date %}
+    <div class="action-item">
+      <form method="post" action="/decommission/{{ project.name }}/preview-delete-cert" class="inline-form"><button type="submit" class="btn-small">delete cert</button></form>
+      <span class="action-help">Revoke &amp; delete this project's Let's Encrypt certificate. <strong>Not recoverable</strong> — a new one would need Phase 3 run again from scratch.</span>
+    </div>
+    {% endif %}
+    <div class="action-item">
+      <form method="post" action="/lifecycle/{{ project.name }}/preview-delete-forever" class="inline-form"><button type="submit" class="btn-danger">delete forever</button></form>
+      <span class="action-help">Erase this panel's own record of the project (its config + encrypted secrets). The final, irreversible step — it only runs once the files and cert are already gone from VM 100.</span>
+    </div>
+  {% else %}
+    <div class="action-item">
+      <span class="inline-form"><a href="/wizard/{{ project.id }}" class="btn-small btn-primary">continue setup →</a></span>
+      <span class="action-help">This project is mid-onboarding. Pick the wizard back up exactly where you left off.</span>
+    </div>
+    <div class="action-item">
+      <form method="post" action="/decommission/{{ project.name }}/preview-stop" class="inline-form"><button type="submit" class="btn-small">decommission</button></form>
+      <span class="action-help">Abandon this half-finished setup — stops anything started and frees any allocated Redis indices.</span>
+    </div>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if redis_rows %}
+<div class="card">
+  <h2 style="margin-top:0;">Redis (VM 103, not VM 100)</h2>
+  <table>
+    <thead><tr><th>Index</th><th>Purpose</th><th>URL</th></tr></thead>
+    <tbody>
+      {% for r in redis_rows %}
+      <tr><td>/{{ r.idx }}</td><td>{{ r.purpose }}</td><td><code>redis://10.10.0.21:6379/{{ r.idx }}</code></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% if summary %}
+<div class="card">
+  <h2 style="margin-top:0;">Deployment summary</h2>
+  <table>
+    <tbody>
+      <tr><td>Code on VM 100</td><td><code>{{ summary.app_dir }}/</code></td></tr>
+      <tr><td>.env location</td><td><code>{{ summary.env_path }}</code> (mode 600)</td></tr>
+      {% if summary.nginx_site_path %}
+      <tr><td>nginx site</td><td><code>{{ summary.nginx_site_path }}</code> — {{ 'enabled' if summary.nginx_enabled else 'not enabled' }}</td></tr>
+      {% endif %}
+      {% if summary.cert_expiry_date %}
+      <tr><td>Certificate expires</td><td>{{ summary.cert_expiry_date }}</td></tr>
+      {% endif %}
+      {% if summary.dns_name %}
+      <tr><td>DNS</td><td><code>{{ summary.dns_name }}</code> resolves to {{ summary.dns_resolved_ip or 'nothing yet' }}</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+  <p><a href="/wizard/{{ project.id }}/summary">Full deployment summary →</a></p>
+</div>
+{% endif %}
+
+{% if activity %}
+<div class="card">
+  <h2 style="margin-top:0;">Recent activity</h2>
+  <ul class="timeline">
+    {% for a in activity %}
+    <li>
+      <span class="timeline-dot timeline-{{ a.status }}"></span>
+      <span class="timeline-action">{{ a.action_type|replace('onboarding_', '')|replace('_', ' ') }}</span>
+      <span class="timeline-meta muted">{{ a.status }}{% if a.exit_code is not none and a.exit_code != 0 %} · exit {{ a.exit_code }}{% endif %} · {{ a.created_at }} · {{ a.actor }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% if user.role == 'admin' %}
+<div class="card">
+  <h2 style="margin-top:0;">Observability</h2>
+  <p><small>Optional, per project — GlitchTip (error tracking), Loki (logs), ntfy (alerts), all hosted on VM 103. Not required for any project to run.</small></p>
+  {% if obs_status.sentry_enabled or obs_status.loki_enabled or obs_status.ntfy_enabled %}
+  <table>
+    <tbody>
+      <tr><td>Error tracking (GlitchTip)</td><td>{{ 'saved' if obs_status.sentry_enabled else 'not set' }}</td></tr>
+      <tr><td>Log shipping (Loki)</td><td>{{ 'saved' if obs_status.loki_enabled else 'not set' }}</td></tr>
+      <tr><td>Alerts (ntfy)</td><td>{{ 'saved' if obs_status.ntfy_enabled else 'not set' }}</td></tr>
+    </tbody>
+  </table>
+  {% endif %}
+  <a href="/projects/{{ project.id }}/observability" class="btn-small">{{ 'Manage observability →' if (obs_status.sentry_enabled or obs_status.loki_enabled or obs_status.ntfy_enabled) else 'Set up observability →' }}</a>
+</div>
+{% endif %}
+
+{% if user.role == 'admin' %}
+<p><a href="/projects/{{ project.id }}/github-actions">GitHub Actions deploy workflow &amp; CI key →</a></p>
+{% endif %}
+
+<p style="margin-top:1.5rem;"><a href="/">← Back to dashboard</a></p>
+{% endblock %}

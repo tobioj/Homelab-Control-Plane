@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}New project{% endblock %}
+{% block content %}
+<h1>New project — step 1: repo</h1>
+<div class="help-note">
+  <strong>What onboarding does:</strong> clones your repo onto VM 100, sets up a Python venv, wires Redis + Celery, writes a secured <code>.env</code>, installs systemd services behind nginx, and (optionally) issues a Let's Encrypt cert so it's live over HTTPS — each step previewed and confirmed by you first.<br><br>
+  <strong>Have ready for a smooth run:</strong> a Django or FastAPI repo with a health-check endpoint returning <code>200</code>, a <code>.env.example</code>, a dependency file (<code>requirements.txt</code> / <code>pyproject.toml</code>), and your WSGI/ASGI entrypoint (e.g. <code>config.wsgi:application</code> or <code>main:app</code>). You can paste an existing <code>.env</code> later instead of typing each variable.
+</div>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<form method="post" action="/wizard/new" class="login-form">
+  <label>Project name <input type="text" name="name" required pattern="[a-z0-9\-]+" title="lowercase letters, digits, hyphens only"></label>
+  <label>Repo URL (SSH or HTTPS — never with an embedded token) <input type="text" name="repo_url" required placeholder="git@github.com:owner/repo.git"></label>
+  <label>Branch <input type="text" name="branch" value="main"></label>
+  <button type="submit">Create draft</button>
+</form>
+{% endblock %}

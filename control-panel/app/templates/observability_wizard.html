@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}{{ project.name }} — observability setup{% endblock %}
+{% block content %}
+<h1>{{ project.name }} — observability setup</h1>
+<p style="color:var(--text-dim);">
+  Separate from the main onboarding wizard — optional, any time, not required for {{ project.name }} to run.
+  GlitchTip (errors), Loki (logs), and ntfy (alerts) are all hosted on VM 103 (this machine's own monitoring stack).
+</p>
+
+<div class="wizard-breadcrumb" style="margin-bottom:1.5rem;">
+  <span class="{{ 'step-done' if prereqs.token_set and prereqs.org_set and prereqs.team_set else 'step-current' }}">1. Control panel config</span>
+  <span class="step-pending">→</span>
+  <span class="step-pending">2. Repo readiness (informational)</span>
+  <span class="step-pending">→</span>
+  <span class="{{ 'step-done' if obs_status.sentry_enabled or obs_status.loki_enabled or obs_status.ntfy_enabled else 'step-pending' }}">3. Enable (automated)</span>
+  <span class="step-pending">→</span>
+  <span class="{{ 'step-done' if sync and sync.SENTRY_DSN.deployed else 'step-pending' }}">4. Write &amp; deploy</span>
+  <span class="step-pending">→</span>
+  <span class="step-pending">5. Verify</span>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">1. Control panel configuration <small style="color:var(--text-faint);">(one-time, per control panel, not per project)</small></h2>
+  {% if prereqs.token_set and prereqs.org_set and prereqs.team_set %}
+  <p class="status-active" style="display:inline-block;">Configured</p>
+  {% else %}
+  <p class="error">Missing — this must be done ONCE before ANY project can enable observability.</p>
+  <p><small>
+    Add to <code>~/control-panel/.env</code> on this machine:<br>
+    <code>GLITCHTIP_API_TOKEN=&lt;from GlitchTip UI → Profile → API Tokens&gt;</code>{{ ' ✓' if prereqs.token_set }}<br>
+    <code>GLITCHTIP_ORG_SLUG=&lt;from the URL when viewing your org in GlitchTip&gt;</code>{{ ' ✓' if prereqs.org_set }}<br>
+    <code>GLITCHTIP_TEAM_SLUG=&lt;from the URL when viewing your team&gt;</code>{{ ' ✓' if prereqs.team_set }}<br>
+    Then restart the control panel for it to take effect.
+  </small></p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">2. Repo readiness <small style="color:var(--text-faint);">(manual — you check/edit the repo's own code)</small></h2>
+  {% if repo_readiness.referenced %}
+  <p class="status-active" style="display:inline-block;">SENTRY_DSN or LOKI_PUSH_URL referenced in this repo's own code</p>
+  <p><small>Found in: {% for f in repo_readiness.files %}<code>{{ f }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</small></p>
+  {% else %}
+  <p class="warning">Not found anywhere in this repo's own <code>.py</code> files — the values this wizard saves won't do anything unless the app's own code reads and uses them.</p>
+  <p><small>
+    This is a manual, repo-code step — this tool can't add it for you. Reference pattern (from <code>primary-store</code>'s own <code>config/settings.py</code>):
+    a DSN-guarded <code>sentry_sdk.init(dsn=SENTRY_DSN, ...)</code> call, and <code>python-logging-loki</code>'s handler pointed at <code>LOKI_PUSH_URL</code>
+    with basic auth from <code>LOKI_PUSH_USER</code>/<code>LOKI_PUSH_PASSWORD</code>.
+  </small></p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">3. Enable <small style="color:var(--text-faint);">(automated by this tool)</small></h2>
+  {% if obs_status.sentry_enabled or obs_status.loki_enabled or obs_status.ntfy_enabled %}
+  <p class="status-active" style="display:inline-block;">Already enabled</p>
+  <table>
+    <tbody>
+      <tr><td>Error tracking (GlitchTip)</td><td>{{ 'saved' if obs_status.sentry_enabled else 'not set' }}</td></tr>
+      <tr><td>Log shipping (Loki)</td><td>{{ 'saved' if obs_status.loki_enabled else 'not set' }}</td></tr>
+      <tr><td>Alerts (ntfy)</td><td>{{ 'saved' if obs_status.ntfy_enabled else 'not set' }}</td></tr>
+    </tbody>
+  </table>
+  {% else %}
+  <p><small>Creates a dedicated GlitchTip project (its own DSN, never shared with another project), grants a dedicated ntfy topic, and saves the shared Loki credentials — all to this app's own config, not written to VM 100 yet.</small></p>
+  <form method="post" action="/projects/{{ project.id }}/observability/enable">
+    <button type="submit" class="btn-small" {{ 'disabled' if not (prereqs.token_set and prereqs.org_set and prereqs.team_set) }}>Enable</button>
+  </form>
+  {% if not (prereqs.token_set and prereqs.org_set and prereqs.team_set) %}
+  <p><small class="error">Complete step 1 first.</small></p>
+  {% endif %}
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">4. Write &amp; deploy <small style="color:var(--text-faint);">(automated — you click, this tool runs it)</small></h2>
+  <p><small>Step 3 only saves values here — VM 100's actual deployed <code>.env</code> won't have them until this step runs, then the app's services need restarting to pick them up.</small></p>
+  {% if sync %}
+  <table>
+    <thead><tr><th>Variable</th><th>Deployed on VM 100?</th></tr></thead>
+    <tbody>
+      {% for key, s in sync.items() %}
+      <tr>
+        <td><code>{{ key }}</code></td>
+        {% if s.state == 'in_sync' %}
+        <td class="status-active">in sync</td>
+        {% elif s.state == 'saved_not_deployed' %}
+        <td class="status-inactive">saved, not deployed yet</td>
+        {% elif s.state == 'deployed_but_different' %}
+        <td class="status-failed">deployed, but doesn't match what's saved here — check it manually</td>
+        {% else %}
+        <td class="status-inactive">not saved</td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  <form method="post" action="/wizard/{{ project.id }}/write-env" class="inline-form">
+    <button type="submit" class="btn-small">Write .env to VM 100</button>
+  </form>
+  <form method="post" action="/actions/preview" class="inline-form">
+    <input type="hidden" name="project" value="{{ project.name }}">
+    <input type="hidden" name="service" value="gunicorn">
+    <button type="submit" class="btn-small">Restart gunicorn</button>
+  </form>
+  {% if project.uses_celery %}
+  <form method="post" action="/actions/preview" class="inline-form">
+    <input type="hidden" name="project" value="{{ project.name }}">
+    <input type="hidden" name="service" value="celery">
+    <button type="submit" class="btn-small">Restart celery</button>
+  </form>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">5. Verify</h2>
+  <p><small>Reload this page after writing &amp; restarting — step 4's table above re-checks the live deployed <code>.env</code> against what's saved, every time this page loads.</small></p>
+  {% if obs_status.ntfy_enabled %}
+  <p><a href="{{ 'http://10.10.0.21:8080/project-' + project.name }}" target="_blank">Open this project's ntfy topic →</a></p>
+  {% endif %}
+  <p><a href="http://10.10.0.21:8002" target="_blank">Open GlitchTip →</a> · <a href="http://10.10.0.21:3000" target="_blank">Open Grafana →</a></p>
+</div>
+
+<p><a href="/projects/{{ project.id }}">&larr; Back to {{ project.name }}</a></p>
+{% endblock %}
