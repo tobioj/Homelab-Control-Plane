@@ -1,246 +1,311 @@
 # Design decisions
 
-ADR-style notes: what was chosen, what was rejected, and what the decision cost. Several entries record
-decisions that were **reversed** — those are the useful ones.
+Short, ADR-style notes: what was chosen, what was rejected, and what it cost. Several record decisions that
+were **reversed**; those are the most useful ones.
+
+**Control Panel:**
+[separate planes](#separate-the-control-plane-from-the-data-plane) ·
+[concrete units](#concrete-units-over-template-units) ·
+[preview, confirm, execute](#preview-confirm-execute-for-every-mutation) ·
+[two authorisation layers](#two-independent-layers-of-authorisation) ·
+[ask, don't guess](#ask-dont-guess) ·
+[variable names per repo](#read-variable-names-from-each-repository) ·
+[SSH never raises](#the-ssh-layer-never-raises) ·
+[quote everything](#quote-every-generated-value) ·
+[self-healing commands](#compound-commands-clean-up-after-themselves) ·
+[honest proxies](#use-a-field-only-the-event-itself-writes) ·
+[derive from state](#derive-reconciliation-input-from-state) ·
+[monotonic steps](#monotonic-state-through-one-helper) ·
+[automated renewal](#automated-renewal-as-a-narrow-exception) ·
+[no SPA](#server-rendered-html-no-spa) ·
+[SQLite](#sqlite-as-the-single-source-of-truth)
+
+**Pushlane CI:**
+[test before GitHub](#test-before-github-not-after) ·
+[stay on LTS](#stay-on-the-lts-release) ·
+[strict lanes](#strict-lanes-through-per-account-identities) ·
+[graceful drains](#capacity-changes-never-kill-jobs) ·
+[a folder per lane](#one-action-folder-per-lane) ·
+[one shared cache](#one-cache-server-isolated-per-repository) ·
+[tested agent docs](#documentation-that-is-executed-as-a-test) ·
+[a GitHub App](#a-github-app-not-personal-tokens)
 
 ---
 
-## Separate the control plane from the data plane
+## Control Panel
 
-**Decision.** The deploy tool runs on a different VM from the applications it deploys.
+### Separate the control plane from the data plane
 
-**Why.** A tool that deploys applications is at its most dangerous while deploying. If it shares a host
-with its targets, a bad unit file, an exhausted port, a filled disk or an `nginx -t` failure can take
-down the thing you need in order to fix it. Separating them means the recovery path is always available.
+**Decision.** The deploy tool runs on a different VM from the apps it deploys.
 
-**Secondary benefit.** It gives secrets a natural home. The control plane holds them encrypted; the data
-plane receives only the single `.env` each app needs. There is no host that holds both the decryption key
-and every application's plaintext configuration.
+**Why.** A deploy tool is most dangerous while it deploys. On the same host as its targets, a bad unit file, a
+full disk or a failed `nginx -t` can take down the very thing you need to fix it. Apart, the recovery path is
+always there.
 
-**Cost.** Every operation is now a network round trip, and every one can fail in network-shaped ways.
-This is why the SSH layer never raises — see below.
+**Bonus.** Secrets get a natural home. The control plane holds them encrypted; the data plane receives only
+the one `.env` each app needs. No single host holds both the decryption key and every app's plaintext.
 
----
+**Cost.** Every operation is a network round trip that can fail in network-shaped ways, which is why the SSH
+layer never raises.
 
-## Concrete units over template units
+### Concrete units over template units
 
-**Decision.** For each app, generate a concrete systemd unit (`gunicorn@<app>.service` as a literal
-filename) instead of relying on the shared `%i` template unit.
+**Decision.** Generate a concrete unit per app (`gunicorn@<app>.service` as a real file name) instead of leaning
+on the shared `%i` template.
 
-**Context.** The host already had true template units that the original application resolved through.
-Editing those to support a second framework would have changed behaviour for the existing app.
+**Context.** The host already had template units that the first app resolved through. Changing them to support
+a second framework would have changed behaviour for that app.
 
-**Why it works.** systemd resolves an exact filename match before falling back to a template, so adding
-concrete files is purely additive — the pre-existing app keeps resolving exactly as before. Each new app
-gets its framework-correct command line baked in.
+**Why it works.** systemd prefers an exact file name over a template, so concrete files are purely additive: the
+existing app resolves exactly as before, and each new app gets its framework's command line baked in.
 
-**Rejected alternative.** Parameterising the shared template further. It would have made one file
-responsible for every framework's differences, and any mistake would affect every app at once.
+**Rejected.** Parameterising the shared template further, which would make one file carry every framework's
+differences and let one mistake hit every app at once.
 
----
+### Preview, confirm, execute for every mutation
 
-## Preview → confirm → execute for every mutation
+**Decision.** No mutating action runs from a request handler. Each becomes a `pending_actions` row, shown as the
+literal command, and runs only on explicit confirmation.
 
-**Decision.** No mutating action executes from a request handler. Each becomes a row in
-`pending_actions`, rendered as the literal command, and runs only on explicit confirmation.
+**Why.** The tool exists to prevent silent mistakes; one that executes silently defeats itself. Showing the
+exact command also makes it teachable: you can see what it would have typed.
 
-**Why.** The tool exists to prevent silent mistakes; a tool that silently executes is self-defeating.
-Showing the exact command also makes the tool teachable — you can see what it would have typed.
+**First refinement: secrets.** Writing an `.env` doesn't fit, because its "command" would contain decrypted
+values that must never reach `pending_actions` or the audit log. Instead of exempting it, the pipeline was split
+into `load_pending_for_confirm()` and `record_result()`, so the `.env` write reuses both halves with a different
+mechanism (SFTP) and stores a redacted preview listing variable names only.
 
-**Refinement forced by reality.** Writing an `.env` doesn't fit: the "command" would contain decrypted
-secrets, which must never reach `pending_actions` or the audit log. Rather than exempt it, the pipeline
-was split into `load_pending_for_confirm()` and `record_result()` so the `.env` write reuses both halves
-with a completely different execution mechanism (SFTP), and stores a redacted placeholder — variable
-names only — for review.
+**Second refinement: a race.** The first confirm was select-then-check with no atomic claim, so two quick submits
+could both see `pending` and both run. Certificate issuance takes up to a minute with no progress bar, which
+invites exactly that. A `claimed_at` column now makes the claim atomic.
 
-**Refinement forced by a race.** The initial confirm was a select-then-check with no atomic claim. Two
-concurrent submits could both observe `pending` and both execute. Certificate issuance takes 40–60
-seconds with no progress indicator, which actively invites a second click. Fixed with an atomic claim
-via a dedicated `claimed_at` column.
+> A new `status` value was tried first and failed at once: the column has a `CHECK` constraint, and SQLite can't
+> change one without rebuilding the table. A nullable column through the existing migration helper was the
+> better shape anyway.
 
-> Implementation note: a new `status` enum value was tried first and failed immediately — the column has
-> a `CHECK` constraint, and SQLite can't alter one without a full table rebuild. A nullable column added
-> through the existing migration helper was the right shape anyway.
-
----
-
-## Two independent layers of authorisation
+### Two independent layers of authorisation
 
 **Decision.** Scoped `sudoers` on the target host **and** an application-level denylist in the panel.
 
-**Why both.** A `sudoers` rule can only pattern-match a command string. `systemctl stop gunicorn@*`
-matches every application — it structurally cannot express "every app except the important one." So the
-protected-app check happens in the application, before a command is ever built.
+**Why both.** `sudoers` can only match command strings. `systemctl stop gunicorn@*` matches every app; it can't
+say "every app except the important one". So protected apps are refused in the application, before a command
+exists.
 
-**Verification.** Attempting all three destructive operations against the protected app through the real
-API produced three clean refusals and zero `pending_actions` rows.
+**Verified.** All three destructive operations against the protected app through the real API: three clean
+refusals, zero `pending_actions` rows.
 
-**Extension.** A later gap showed the denylist needed a second dimension: a *subdomain* uniqueness check.
-Protecting a *name* doesn't stop a harmlessly-named test app from being configured with the production
-app's domain and then requesting a real certificate for it. The check now runs both where a subdomain is
-first recorded and again immediately before every action that touches DNS, certificates or the proxy.
+**Extended.** Protecting a *name* doesn't stop a harmlessly named test app from being given the production
+app's domain and requesting a real certificate for it. Subdomain ownership is now checked when a subdomain is
+recorded and again right before every action that touches DNS, certificates or the proxy.
 
----
+### Ask, don't guess
 
-## Ask, don't guess — and the two times auto-detection was removed
+**Decision.** The operator always sets the framework, app folder and entrypoint by hand.
 
-**Decision.** Framework, application directory and entrypoint are set manually by the operator. Always.
+**History.** The wizard used to detect them with a recursive search. That was walked back **twice**: one
+repository can hold several unrelated projects, and only the operator knows which is meant. Detection that is
+right 90% of the time produces a confidently wrong deployment the other 10%.
 
-**History.** The wizard originally auto-detected these with a recursive filesystem search. This was
-walked back **twice**, because a repository can contain multiple unrelated projects and only the operator
-knows which one is meant. Auto-detection that's right 90% of the time produces a confidently wrong
-deployment 10% of the time.
+**What detection may still do.** Search and offer. Dependency files, remote branches and folders are discovered
+and presented as choices; the tool never picks one.
 
-**What auto-detection is still allowed to do.** *Search* and *offer.* Candidate dependency files, remote
-branches and repository directories are all discovered automatically and presented as explicit choices.
-The tool never picks one.
+**The same rule for error messages.** Failure hints cover a short list of *grounded* patterns, failures actually
+seen or documented behaviour of the tool. Anything else gets no hint, and the raw output is always shown.
+Speculative advice for failures nobody has seen is worse than none.
 
-**The same discipline applied to error messages.** Failure interpretation covers a deliberately short
-list of *grounded* patterns — failures actually observed, or universal documented behaviour of the
-underlying tool. Everything else returns nothing, and the raw output is always shown regardless.
-Speculative error text for failures nobody has seen is worse than no text.
+### Read variable names from each repository
 
----
+**Decision.** Parse each repository's own `.env.example` to learn which names *that* project reads, and write
+those.
 
-## Detect variable *names* per repository
+**Why.** One project read `DJANGO_ALLOWED_HOSTS`, another `ALLOWED_HOSTS`. The wrong name doesn't error; the
+framework quietly uses its default, and the failure shows up later as a puzzling `400`.
 
-**Decision.** Parse each repository's own `.env.example` to learn which variable names *that* project
-uses, and write those.
+**Related.** Whether a variable is *required* is decided by finding where the source reads it without a default.
+An early substring check for `"default"` marked a required variable optional because an unrelated dictionary key
+on the same line contained that word.
 
-**Why.** One real repository used `DJANGO_ALLOWED_HOSTS`; another used `ALLOWED_HOSTS`. Writing the wrong
-name does not error — the framework silently uses its own default. The failure surfaces later as a
-confusing `400`, far from its cause.
+### The SSH layer never raises
 
-**Related.** Determining whether a variable is *required* greps the repository's own source for the
-variable being read without a default. An early version used a naive substring check for `"default"` and
-mislabelled a genuinely-required variable as optional because an unrelated dictionary key on the same
-line contained that word.
+**Decision.** `ssh_client.run()` returns a result for every outcome, including timeouts (`124`) and connection
+failures (`255`).
 
----
+**Why.** An early version let a timeout escape, and a slow dependency install turned into a 500 that lost the
+operator's place in the wizard over something that wasn't even an error. In a deploy tool, remote failures are
+expected states, not exceptions.
 
-## The SSH layer never raises
+**Consequence.** Callers check exit codes; there is no exception to forget. The default timeout is generous
+(300 s) because real installs are slow.
 
-**Decision.** `ssh_client.run()` returns a result dictionary for every outcome, including timeouts
-(`124`) and connection failures (`255`).
+### Quote every generated value
 
-**Why.** An early version let a timeout propagate, and a slow dependency install crashed a request with
-a 500 — losing the operator's place in the wizard for something that wasn't even an error. Remote
-failures are *expected* states in a deploy tool, not exceptions.
+**Decision.** Every value written into a generated `.env` goes through `shlex.quote()`.
 
-**Consequence.** Callers must check exit codes; there's no exception to forget to catch. The default
-timeout is generous (300s) because real installs are slow.
+**Why.** A connection string containing `&` was cut off when the file was `source`d
+([incident #3](INCIDENTS.md#3-a-value-cut-off-at-an-ampersand)). Both readers of the file, systemd's parser and
+the shell, treat single-quoted values literally.
 
----
+**Rule.** Any new code that writes an env-style file quotes the same way.
 
-## Quote every generated value
+### Compound commands clean up after themselves
 
-**Decision.** Every value written into a generated `.env` is `shlex.quote()`-wrapped.
-
-**Why.** See [incident #3](INCIDENTS.md#3-a-configuration-value-truncated-at-an-ampersand). A connection
-string containing `&` was silently truncated when the file was `source`d. Both consumers of the file —
-systemd's parser and the shell — treat single-quoted values as literal.
-
-**Rule.** Any new code that writes an env-style file must quote the same way.
-
----
-
-## Self-healing compound commands
-
-**Decision.** Commands that link a config file into an enabled directory and then validate must clean up
-after themselves on failure:
+**Decision.** A command that links a config into an enabled folder and then validates must undo the link if
+validation fails:
 
 ```
 ln -sf <site> <enabled> && ( nginx -t || ( rm -f <enabled> && exit 1 ) ) && reload
 ```
 
-**Why.** `ln -sf` succeeds regardless of whether the config it enables is valid. A plain `&&` chain that
-fails at validation leaves a broken symlink behind — which then blocks validation, and therefore any
-future reload, **for every other application on the host**. Reproduced live: a failed operation for one
-app made the whole proxy config invalid.
+**Why.** `ln -sf` succeeds whether or not the config is valid. A plain `&&` chain that stops at validation
+leaves a broken link behind, which then fails validation, and so every future reload, **for every other app on
+the host**. Reproduced live: one app's failed install made the whole proxy config invalid.
 
-**Lesson generalised.** In a compound privileged command, ask what the intermediate steps leave behind if
-a later step fails. Gating the last step is not the same as being safe.
+**Generalised.** In a compound privileged command, ask what the earlier steps leave behind when a later one
+fails. Guarding the last step isn't the same as being safe.
 
----
+### Use a field only the event itself writes
 
-## Choose proxies that only the event you care about writes
+**Decision.** "Does this app have a certificate?" is answered by the expiry-date field, which only a successful
+issuance writes.
 
-**Decision.** "Does this app have a certificate?" is answered by the expiry date field, which is written
-only by a genuinely successful issuance.
+**Rejected.** "Is a subdomain recorded?", which is set during configuration, long before issuance
+([incident #7](INCIDENTS.md#7-the-wrong-field-as-a-proxy)).
 
-**Rejected.** "Is a subdomain recorded?" — recorded during configuration, long before issuance is
-attempted. See [incident #7](INCIDENTS.md#7-choosing-the-wrong-field-as-a-proxy).
+**Also rejected.** Reading the certificate folder. It is root-only `0700`; the deploy user can't even test that it
+exists. Granting that would widen the privilege boundary to answer a question the database already answers.
 
-**Also rejected.** Reading the certificate directory directly. It is root-owned `0700`, and the deploy
-user cannot read it at all — not even to test existence. No `sudoers` grant covers a bare existence
-check, and adding one would widen the privilege boundary to answer a question the database can already
-answer.
-
----
-
-## Derive reconciliation input from state
+### Derive reconciliation input from state
 
 **Decision.** The DNS updater builds its domain list from the projects table on every run.
 
-**Rejected.** The pre-existing approach: a hand-typed list in a cron script. It drifted from reality and
-caused a real outage in which every service was healthy and two apps were simply unreachable. See
-[incident #4](INCIDENTS.md#4-dns-drift-between-a-hand-typed-list-and-reality).
+**Rejected.** The original hand-typed list in a cron script, which drifted and caused an outage where every
+service was healthy and two apps were simply unreachable
+([incident #4](INCIDENTS.md#4-dns-drift-from-a-hand-typed-list)).
 
-**Generalised.** Any periodic job that acts on "all the things" must enumerate them from the source of
-truth. A parallel list is a drift generator with a delay fuse.
+**Generalised.** A periodic job that acts on "all the things" must list them from the source of truth. A
+parallel list is a drift generator on a delay fuse. (Pushlane's lane sync follows the same rule.)
+
+### Monotonic state through one helper
+
+**Decision.** A project's wizard position only moves forward, enforced by one `advance_step()` used at every call
+site.
+
+**Why not discipline.** Discipline was tried. Fifteen call sites each did an unguarded write, and two live apps
+regressed in one session. A rule that must hold in fifteen places is a function.
+
+**Exceptions are explicit.** Two genuine "undo" paths write backwards on purpose and say so in a comment.
+
+### Automated renewal as a narrow exception
+
+**Decision.** Certificate renewal runs on a timer without confirmation, the only exception to preview and
+confirm.
+
+**Why it's acceptable.** It only touches apps whose certificate a human already approved, runs the same command
+shape that was reviewed, can't create, delete or reconfigure anything, and every run is audited under its own
+actor name so automated actions stay separate from human ones.
+
+**Where it runs.** On the control plane, which keeps the DNS provider's token in one place instead of on the app
+host.
+
+### Server-rendered HTML, no SPA
+
+**Decision.** Jinja2 templates, with htmx where partial updates help.
+
+**Why.** A single-operator internal tool doesn't justify a build pipeline, a dependency tree or a second
+language. Plain form posts also mean the preview and confirm flow has no client-side state to drift from the
+pending action it represents.
+
+**Where a little JavaScript earned its place.** Adding and removing rows in the variable editor, a global
+"working…" state on submit buttons (most actions are multi-second SSH round trips), and log panes that follow the
+tail only when the reader is already at the bottom.
+
+### SQLite as the single source of truth
+
+**Decision.** One SQLite file holds projects, the Redis ledger, pending actions, encrypted secrets, health and the
+audit log.
+
+**Why it fits.** One writer, low volume, trivial backup, nothing extra to supervise; and a control plane that
+depended on a database server it also deploys would be circular.
+
+**Schema changes.** An idempotent `_ensure_column()` helper at startup instead of a migration framework. Adequate
+at this scale, with one sharp edge: `CHECK` constraints can't be altered in place, which is why the atomic claim
+became a nullable column rather than a new status.
 
 ---
 
-## Monotonic state transitions via a helper
+## Pushlane CI
 
-**Decision.** Onboarding position only ever moves forward, enforced by one `advance_step()` function
-used at every call site.
+### Test before GitHub, not after
 
-**Why not discipline.** Discipline was tried. Fifteen call sites each did an unguarded write, and two
-different live apps regressed within one session. A rule that must hold in fifteen places is a function.
+**Decision.** Developers push to Pushlane; a managed job forwards a commit to GitHub only after its tests pass.
 
-**Exceptions are explicit.** Two genuine "undo" paths write backwards deliberately, and are commented as
-such.
+**Why.** CI that runs after the push to GitHub reports a broken commit that is already public and already
+pulled. Testing first means GitHub's history only ever contains commits that passed, private code is tested on
+private hardware, and hosted CI minutes aren't spent.
 
----
+**Cost.** A second remote to push to. The forwarder makes that cheap: it fast-forwards only, skips outdated
+commits, copies LFS objects, and explains every refusal in actionable terms.
 
-## Automated renewal as a deliberate, narrow exception
+### Stay on the LTS release
 
-**Decision.** Certificate renewal runs on a timer without a confirmation step — the only exception to
-preview-and-confirm.
+**Decision.** Run Forgejo's long-term-support release, and upgrade from one LTS to the next.
 
-**Justification.** It only ever touches an app whose certificate a human already approved once; it runs
-the same command shape that was already reviewed; it cannot create, delete or reconfigure anything; and
-every run is audited under a distinct actor name so automated actions are separable from human ones.
+**Why.** CI is infrastructure other people depend on; a few new features are worth less than a stable, patched
+base. **Cost, accepted knowingly:** job summaries (`GITHUB_STEP_SUMMARY`) are not displayed until the next LTS.
 
-**Where it runs.** On the control plane, not the target host — which keeps the DNS provider's API token
-in exactly one place instead of persisting it on the app host.
+### Strict lanes through per-account identities
 
----
+**Decision.** Two lanes, priority and shared, with priority accounts kept *only* on the priority lane, enforced
+by giving each lane one owner-scoped runner identity per account it serves.
 
-## Server-rendered HTML, no SPA
+**Why.** The goal is that the shared lane is always available to everyone else. Forgejo has no way to exclude
+accounts from an instance-wide runner, and labels would have meant editing every user's workflows.
 
-**Decision.** Jinja2 templates with htmx for the few places that benefit from partial updates.
+**Cost.** Accounts must be registered per lane. A lane sync on the host keeps that automatic: new accounts and
+organisations are added, deleted ones dropped. An identity is deleted from Forgejo only once its lane runs a
+config without it, and a lane is never configured with an identity Forgejo no longer has, because then it
+wouldn't start.
 
-**Why.** A single-operator internal tool doesn't justify a build pipeline, a dependency tree, or a second
-language. Server-rendered pages also mean the preview/confirm flow is plain form posts — no client-side
-state to get out of sync with the pending action it represents.
+### Capacity changes never kill jobs
 
-**Where a little JavaScript was warranted.** Dynamic add/remove rows on the environment-variable editor,
-a global "working…" state on submit buttons (most actions are multi-second SSH round trips with no
-feedback), and log panes that follow the tail only when the reader is already at the bottom.
+**Decision.** A lane's shutdown timeout equals the job time limit; applying a new setting restarts the lane
+gracefully.
 
----
+**Why.** Concurrency gets retuned as the workload changes, and nobody should lose a 40-minute test run to it.
+With small slot counts the drain costs almost nothing: a full lane couldn't have started new work anyway.
 
-## SQLite as the single source of truth
+### One action folder per lane
 
-**Decision.** One SQLite file holds projects, the Redis ledger, pending actions, encrypted secrets,
-health history and the audit log.
+**Decision.** Each lane keeps the actions it downloads (`actions/checkout`, ...) in its own folder.
 
-**Why it's correct here.** One writer, low volume, trivial backup, no separate service to supervise —
-and a control plane that depends on a database server it also deploys would be circular.
+**Why.** A runner serialises action fetches only among its own jobs. Two lanes running as the same user shared a
+default folder, and jobs starting together on both failed with `shallow.lock: File exists`. The fix was
+reproduced first on throwaway runners, then verified the same way.
 
-**Schema evolution.** An idempotent `_ensure_column()` helper runs at startup rather than a migration
-framework. Adequate at this scale, with one sharp edge worth recording: `CHECK` constraints can't be
-altered in place, so constrained columns need a rebuild — which is why an atomic claim became a new
-nullable column rather than a new status value.
+### One cache server, isolated per repository
+
+**Decision.** Both lanes use one Actions cache server; entries are partitioned by repository.
+
+**Why.** With strict lanes, a project can run on either lane over time (a plan change, an organisation repo).
+Two caches would mean cold starts on every switch. Per-repository isolation keeps one project from reading or
+poisoning another's cache.
+
+### Documentation that is executed as a test
+
+**Decision.** Every command in `agents.md` (the reference AI agents read) is executed by a test against a
+temporary account before publishing, and checked against the status code the page documents.
+
+**Why.** Agents follow docs literally. A stale example costs an agent's whole session, and nobody notices until a
+user complains. Running the docs turns drift into a failing test.
+
+### A GitHub App, not personal tokens
+
+**Decision.** One GitHub App (contents: read, commit statuses: write, push events) for syncing and statuses,
+created through GitHub's manifest flow.
+
+**Why.** Deploy keys can push but can't post statuses or receive webhooks. A personal token would be tied to one
+person and expire. An App is installed per repository by its owner, mints short-lived tokens limited to that one
+repository, and its private key goes straight from GitHub to the server without anyone copying it.
+
+**Guardrails.** Sync only fast-forwards or creates branches, never forces or deletes, and leaves diverged
+branches alone; a bad webhook signature gets `403`, never `401`, so the edge's ban rules can't lock GitHub out.

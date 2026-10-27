@@ -1,0 +1,25 @@
+# Example: Proxmox firewall for the CI runner VM (sanitised). The runner executes other people's code, so it may
+# only reach the internet, Forgejo's runner port and the edge proxy. Everything else on the LAN is dropped.
+[OPTIONS]
+enable: 1
+policy_in: DROP
+policy_out: ACCEPT
+ipfilter: 1        # the VM cannot use an address other than its own
+macfilter: 1
+dhcp: 0
+
+[IPSET ipfilter-net0]
+10.10.0.40
+
+[RULES]
+IN ACCEPT -source 10.10.0.2 -p tcp -dport 22    # the hypervisor manages the runner over SSH
+OUT ACCEPT -dest 10.10.0.30 -p tcp -dport 3000  # runner daemon -> Forgejo
+OUT ACCEPT -dest 10.10.0.10 -p tcp -dport 443   # job checkouts -> the CI name, via the edge proxy
+OUT DROP -dest 10.0.0.0/8                       # every private, link-local, CGNAT and multicast range
+OUT DROP -dest 172.16.0.0/12
+OUT DROP -dest 192.168.0.0/16
+OUT DROP -dest 169.254.0.0/16
+OUT DROP -dest 100.64.0.0/10
+OUT DROP -dest 224.0.0.0/4
+OUT DROP -dest fc00::/7
+OUT DROP -dest fe80::/10

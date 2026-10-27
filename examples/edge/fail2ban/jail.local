@@ -1,0 +1,59 @@
+# Example: the edge's fail2ban jails (sanitised; thresholds illustrative).
+# Bans block HTTPS from the offending address; repeat offenders get longer bans, and "recidive" blocks every
+# port for a week. The home LAN is never banned, so a mistake at home can't lock the operator out.
+
+[ci-auth]
+# wrong credentials or tokens on git and the API (git's anonymous first request, user "-", is not counted)
+enabled  = true
+port     = https
+filter   = ci-auth
+logpath  = /var/log/nginx/ci.access.log
+maxretry = 6
+findtime = 10m
+bantime  = 3h
+bantime.increment = true
+bantime.maxtime   = 1w
+ignoreip = 127.0.0.1/8 ::1 10.10.0.0/24
+action   = %(action_)s
+           ntfy-alert[name=%(__name__)s, priority=high, what="failed sign-ins on the CI server"]
+
+[ci-ratelimit]
+# clients that keep hitting nginx's rate limits (password guessing, floods)
+enabled  = true
+port     = https
+filter   = nginx-limit-req
+logpath  = /var/log/nginx/error.log
+maxretry = 6
+findtime = 10m
+bantime  = 3h
+bantime.increment = true
+ignoreip = 127.0.0.1/8 ::1 10.10.0.0/24
+action   = %(action_)s
+           ntfy-alert[name=%(__name__)s, priority=high, what="too many requests to the sign-in page"]
+
+[scanner]
+# probes for common exploit paths, and requests by bare IP or unknown host (answered 444)
+enabled  = true
+port     = https
+filter   = scanner
+logpath  = /var/log/nginx/access.log
+           /var/log/nginx/ci.access.log
+maxretry = 4
+findtime = 1h
+bantime  = 1d
+bantime.increment = true
+ignoreip = 127.0.0.1/8 ::1 10.10.0.0/24
+# scanners are constant background noise: counted in the daily digest, no alert per ban
+action   = %(action_)s
+
+[recidive]
+# banned repeatedly within a day: blocked on every port for 7 days
+enabled   = true
+logpath   = /var/log/fail2ban.log
+banaction = iptables-allports
+maxretry  = 3
+findtime  = 1d
+bantime   = 7d
+ignoreip  = 127.0.0.1/8 ::1 10.10.0.0/24
+action    = %(action_)s
+            ntfy-alert[name=%(__name__)s, priority=urgent, what="repeat offender, blocked on all ports for a week"]

@@ -1,256 +1,245 @@
 # Incident log
 
-Nine real failures against real infrastructure, with root cause and fix. These are the reason the
-architecture looks the way it does. Ordered roughly by how much they changed my thinking.
+Nine real failures of the Control Panel against real infrastructure, each with its cause and its fix. They are
+the reason the architecture looks the way it does. (Pushlane's and the host's edge cases are written up in
+[PUSHLANE-CI.md](PUSHLANE-CI.md#edge-cases-it-handles) and in
+[proxmox-homelab](https://github.com/tobioj/proxmox-homelab).)
 
-A recurring theme: **most of these were silent.** They didn't raise exceptions. A component fell back to
-a default, or honoured the last of two duplicate values, or wrote `NULL` where it should have written
-nothing — and the system kept running while being wrong. That's the failure mode this tool is built
-against.
+**The common thread: almost none of them were loud.** Nothing raised an exception. A component fell back to a
+default, honoured the last of two duplicate values, or wrote `NULL` where it should have written nothing, and
+the system kept running while being wrong. That quiet kind of failure is what this tool is built against.
 
----
-
-## 1. DNS-01 validation and the stale secondary resolver
-
-**Symptom.** Certificate issuance failed with `Incorrect TXT record "" found` — an *empty* record — even
-though an independent `dig` moments later showed the correct value present.
-
-**First fix (insufficient).** The hook script published the TXT record then slept a fixed 30 seconds.
-Replaced the sleep with an active poll: query the record every 3 seconds against a public resolver, up
-to a ceiling, and proceed only once it's visible.
-
-**Second symptom.** Retest produced a *different, more specific* error:
-`During secondary validation: Incorrect TXT record <STALE VALUE>`.
-
-**Root cause.** Let's Encrypt deliberately validates from multiple independent network vantage points to
-defend against DNS hijacking. The secondary check reached a *different* node of the DNS provider's
-infrastructure than the one my chosen resolver was forwarding to — and that node still held a stale value
-from a previous attempt. No single resolver's view could have detected this.
-
-**Fix.** Poll **two** independent public resolvers and require both to agree before proceeding, plus a
-longer post-confirmation grace period and a longer overall ceiling.
-
-**Honest limitation.** This is stronger, not airtight. The provider could have a node neither resolver
-routes through. If it recurs, the escalation is a third resolver or a longer grace period — the
-poll-until-visible pattern itself is sound.
-
-**Lesson.** One resolver's view of DNS is not "DNS." Any check against a distributed system needs to
-match the *verifier's* vantage point, not your own.
+| # | Incident | In one line |
+| --- | --- | --- |
+| 1 | [DNS-01 and the stale secondary resolver](#1-dns-01-and-the-stale-secondary-resolver) | Validate from the verifier's vantage point, not your own |
+| 2 | [Duplicate keys, and the last one wins](#2-duplicate-keys-and-the-last-one-wins) | Generalise on the second occurrence |
+| 3 | [A value cut off at an ampersand](#3-a-value-cut-off-at-an-ampersand) | Quote for the strictest reader |
+| 4 | [DNS drift from a hand-typed list](#4-dns-drift-from-a-hand-typed-list) | Derive from state |
+| 5 | [Monotonic state, enforced by a helper](#5-monotonic-state-enforced-by-a-helper) | Fifteen call sites need a function |
+| 6 | [An allocator that didn't know its limit](#6-an-allocator-that-didnt-know-its-limit) | New guarantees break old callers |
+| 7 | [The wrong field as a proxy](#7-the-wrong-field-as-a-proxy) | Pick a field only the event writes |
+| 8 | [A pattern that matched too much](#8-a-pattern-that-matched-too-much) | Test patterns on real third-party names |
+| 9 | [An idle poll with an unbounded cost](#9-an-idle-poll-with-an-unbounded-cost) | "Idle" depends on who is watching |
 
 ---
 
-## 2. Duplicate environment keys and last-occurrence precedence
+## 1. DNS-01 and the stale secondary resolver
 
-**Symptom.** Celery logged `No hostname was supplied. Reverting to default 'localhost'` and then
-continuous connection-refused errors against a message broker it was never configured to use. Errors
-streamed into error tracking for days.
+**Symptom.** Issuance failed with `Incorrect TXT record "" found`, an *empty* record, although a `dig` a moment
+later showed the right value.
 
-**Root cause.** The `.env` builder writes authoritative lines first (Redis URLs computed from the
-ledger), then appends every saved custom variable verbatim. Stale empty-string rows for those *same*
-keys had been saved during early onboarding, before an upload filter existed. `EnvironmentFile=` honours
-the **last** occurrence of a duplicate key — so the empty strings won, and Celery fell back to its
-built-in default broker.
+**First fix, not enough.** The hook used to publish the record and sleep 30 seconds. It became an active poll:
+query a public resolver every 3 seconds and continue only once the record is visible.
 
-**Why it took three attempts.** The same class of bug appeared three times:
+**Second symptom.** A different, more precise error: `During secondary validation: Incorrect TXT record
+<STALE VALUE>`.
 
-1. First for `ALLOWED_HOSTS` / `DEBUG` — an uploaded `.env` smuggled in a stale value that silently
-   overrode the computed one, producing a `400 DisallowedHost` on a fully-deployed app.
-2. Then for the broker and cache keys — same mechanism, different key set.
-3. The fix each time was narrow: add *those* keys to the filter.
+**Cause.** Let's Encrypt validates from several independent vantage points to resist DNS hijacking. Its
+secondary check reached a *different* node of the DNS provider than my resolver did, and that node still held a
+stale value from an earlier attempt. No single resolver could have seen it.
 
-**Proper fix.** A single `governed_var_names()` set is the authority, unioning the per-repo detected
-names with the canonical ones, applied at three layers: the upload route, the save route, and the file
-builder itself. Any code path that writes a dedicated line must register its key there.
+**Fix.** Poll **two** independent public resolvers and require both to agree, then wait a longer grace period,
+under a longer overall ceiling.
 
-**Lesson.** When the same bug recurs, the fix was at the wrong altitude. Generalise on the *second*
-occurrence, not the third.
+**Still true.** This is stronger, not airtight: the provider could have a node neither resolver reaches. If it
+returns, the next step is a third resolver or a longer grace period; the poll-until-visible pattern holds.
+
+**Lesson.** One resolver's view of DNS is not "DNS". A check against a distributed system has to match the
+*verifier's* vantage point.
 
 ---
 
-## 3. A configuration value truncated at an ampersand
+## 2. Duplicate keys, and the last one wins
 
-**Symptom.** After fixing an unrelated bug, the app still connected to `localhost:5432` instead of the
-real database. The variable was *present* in the environment — just cut off partway through.
+**Symptom.** Celery logged `No hostname was supplied. Reverting to default 'localhost'`, then endless
+connection-refused errors against a broker it was never configured to use. Error tracking filled up for days.
 
-**Root cause.** The connection string contained `&` (from `?sslmode=require&channel_binding=require`).
-Written unquoted, the moment anything `source`d the file, the shell read `&` as "run the preceding
-command in the background" and discarded the rest of the line. Confirmed by reproducing the `source`
-outside the app and finding the truncated tail sitting in `jobs`.
+**Cause.** The `.env` builder writes the authoritative lines first (Redis URLs from the ledger), then appends
+every saved custom variable. Empty-string rows for those *same* keys had been saved during early onboarding,
+before an upload filter existed. `EnvironmentFile=` keeps the **last** occurrence of a key, so the empty values
+won and Celery fell back to its default broker.
 
-**Fix.** Every generated value is `shlex.quote()`-wrapped. Both consumers — systemd's `EnvironmentFile`
-parser and the shell's `source` — treat single-quoted values as literal.
+**Why it took three tries.** The same class of bug appeared three times: first `ALLOWED_HOSTS` and `DEBUG` (an
+uploaded `.env` overrode the computed value and produced `400 DisallowedHost`), then the broker and cache keys.
+Each fix added *those* keys to a filter.
 
-**Lesson.** A generated config file has more than one consumer, each with its own parsing rules. Quote
-for the strictest one.
+**Real fix.** One `governed_var_names()` set is the authority, combining the names detected in the repository
+with the canonical ones, applied at all three layers: the upload route, the save route and the file builder.
+Any code that writes a dedicated line registers its key there.
 
----
-
-## 4. DNS drift between a hand-typed list and reality
-
-**Symptom.** One app reachable, two others unreachable — previously working, no deploys in between.
-Every service on the host was healthy: processes active, sockets present, proxy config valid, identical
-local responses for all three.
-
-**Root cause.** The ISP had rotated the WAN IP. The dynamic-DNS updater was a cron script with a
-**hand-typed** domain list. The one app in that list followed the new address; the two that had never
-been added stayed pointed at the dead one. Purely stale DNS — nothing wrong with any deployment.
-
-**The design flaw it exposed.** That list had no connection to the set of apps the panel actually
-manages, so **every newly onboarded app was born prone to this.** The panel would issue a certificate,
-mark the app live, and never add it to any DNS updater.
-
-**Fix.** A panel-owned updater that derives its domain set from the projects table on every run — every
-managed app is maintained automatically, forever.
-
-**Lesson.** Reconciliation input must be *derived from state*, never maintained in parallel with it. A
-hand-maintained list adjacent to a database is a drift generator.
+**Lesson.** When a bug comes back, the fix was at the wrong altitude. Generalise on the *second* occurrence, not
+the third.
 
 ---
 
-## 5. Monotonic state, enforced by a helper rather than by discipline
+## 3. A value cut off at an ampersand
 
-**Symptom.** A live, fully-deployed app silently regressed to an earlier onboarding step, discarding its
-recorded go-live status — twice, on two different apps, in one session.
+**Symptom.** After an unrelated fix, an app still connected to `localhost:5432` instead of its real database.
+The variable was present, just cut short.
 
-**Root cause.** Each wizard step's finaliser did an unguarded `UPDATE projects SET step = '<literal>'`.
-Most steps are deliberately re-visitable. Re-running an *earlier* step after a *later* one had succeeded
-stomped the recorded position backwards, so the wizard re-offered work that was already done.
+**Cause.** The connection string contained `&` (`?sslmode=require&channel_binding=require`). Unquoted, the
+moment anything `source`d the file, the shell read `&` as "run this in the background" and dropped the rest of
+the line. Reproducing the `source` by hand left the missing tail sitting in `jobs`.
 
-**First fix (insufficient).** Guarded the one step that had broken.
+**Fix.** Every generated value goes through `shlex.quote()`. Both readers, systemd's `EnvironmentFile` parser
+and the shell, treat single-quoted values literally.
 
-**Proper fix.** One `advance_step()` helper that writes only if the new step is at or after the current
-one in the canonical order, applied to every call site — about fifteen of them. Two genuine "undo" paths
-were deliberately left unguarded.
-
-**Lesson.** If a rule must hold at fifteen call sites, it needs to be a function, not a convention. The
-first fix treated the symptom because I patched where it broke rather than where it *could* break.
+**Lesson.** A generated config file has more than one reader, each with its own parsing rules. Quote for the
+strictest.
 
 ---
 
-## 6. A resource allocator with no knowledge of its own limit
+## 4. DNS drift from a hand-typed list
 
-**Symptom.** An app's Celery worker failed with `DB index is out of range`. It had been allocated Redis
-database indices 16 and 17 on a server configured with 16 databases (valid range 0–15).
+**Symptom.** One app reachable, two unreachable, all previously fine, no deploys in between. Every service was
+healthy: processes up, sockets present, proxy config valid, identical local responses for all three.
 
-**Root cause.** The allocator was `MAX(index) + 1`, unconditionally. A long session of creating and
-destroying test apps had freed up most low indices, but the counter kept climbing past the real ceiling
-regardless.
+**Cause.** The ISP had changed the WAN IP. The dynamic-DNS updater was a cron script with a **hand-typed**
+domain list. The one app on it followed the new address; the two never added stayed pointed at the old one.
+Nothing was wrong with any deployment.
 
-**Fix, part one.** Prefer reclaiming the lowest genuinely-free index; refuse rather than allocate at or
-beyond the configured maximum. Index 0 is excluded from reclamation — it's the protocol default a bare
-client connects to, not a safely reusable slot.
+**The flaw underneath.** The list had no link to the apps the panel manages, so **every newly onboarded app was
+born exposed to this**: the panel issued its certificate, marked it live, and never added it to any updater.
 
-**Fix, part two — the fix broke its callers.** Three call sites computed `cache_index = broker_index + 1`,
-correct *only* under the old always-increment behaviour. Once indices could be reclaimed
-non-consecutively, that arithmetic could hand out an index already belonging to a different app — exactly
-the collision the ledger exists to prevent. The same sites also did bare `INSERT`s that now hit unique
-constraint violations when a "free" index was an existing row.
+**Fix.** A panel-owned updater that builds its domain set from the projects table on every run. Every managed
+app is kept current automatically, for good.
 
-**Fix.** The allocator takes an `exclude` set so a caller needing two indices requests the second one
-properly, never by arithmetic. Every ledger write became an upsert.
-
-**Lesson.** Changing a function's *guarantees* is a breaking change even when the signature is
-unchanged. Callers encode assumptions you didn't write down.
+**Lesson.** Reconciliation input must be *derived from state*, never kept alongside it. A hand-maintained list
+next to a database is a drift generator.
 
 ---
 
-## 7. Choosing the wrong field as a proxy
+## 5. Monotonic state, enforced by a helper
 
-**Symptom.** An app became permanently stuck. "Delete certificate" fired a real deletion for a
-certificate that had never been issued, failed, and "delete permanently" then refused to run because a
-field was still set — with no path to clear it, because the only clearing path required the deletion to
-succeed.
+**Symptom.** A live, fully deployed app silently fell back to an earlier wizard step and lost its go-live
+status, twice, on two different apps, in one session.
 
-**Root cause.** "Does this app have a certificate?" was answered with "is a subdomain recorded?" But the
-subdomain is recorded during *configuration*, long before issuance is even attempted. An app that never
-reached the go-live phase has a subdomain and no certificate.
+**Cause.** Each step's finaliser ran an unguarded `UPDATE projects SET step = '<literal>'`. Most steps are meant
+to be re-visitable, so re-running an *earlier* step after a later one had finished moved the position backwards,
+and the wizard offered work that was already done.
 
-**Compounding bug.** The expiry field was also being wiped to `NULL` on a *successful* no-op renewal.
-When the certificate authority decides a certificate isn't due, it exits successfully and prints
-"not yet due for renewal" — with no expiry line. The parser found no match and wrote `NULL`, destroying
-a perfectly good recorded date. Recovering it required a forced re-issuance.
+**First fix, not enough.** Guarding the one step that broke.
 
-**Fix.** Use the expiry date — set *only* by a genuinely successful issuance — as the existence proxy.
-Never write `NULL` on a regex non-match; a non-match means "no new information," not "the old value is
-gone."
+**Real fix.** One `advance_step()` that writes only when the new step is at or after the current one in the
+canonical order, used at every call site, about fifteen of them. The two genuine undo paths stay unguarded on
+purpose.
 
-**Lesson.** When picking a field as a proxy for an event, choose one that *only* that event writes. And
-`if match else None` is a bug whenever `None` means "erase."
+**Lesson.** A rule that must hold at fifteen call sites is a function, not a convention. The first fix treated
+the symptom because I patched where it broke rather than everywhere it *could*.
 
 ---
 
-## 8. A regex that matched more than it should
+## 6. An allocator that didn't know its limit
 
-**Symptom.** Caught in testing, not production. A real vendor API credential in a repo's
-`.env.example` was silently replaced with random bytes.
+**Symptom.** An app's Celery worker failed with `DB index is out of range`: it had been given Redis indices 16
+and 17 on a server with 16 databases (0 to 15).
 
-**Root cause.** Secret-key auto-generation matched `(^|_)SECRET_KEY$` — the same suffix style used
-elsewhere for `ALLOWED_HOSTS` and `DEBUG`. But `SECRET_KEY` is a far more overloaded suffix among vendor
-credential names: it also matches `STRIPE_SECRET_KEY`. The variable was auto-filled with a random token
-and never shown on the form for the operator to supply the real value.
+**Cause.** The allocator was `MAX(index) + 1`, unconditionally. A long session of creating and deleting test
+apps freed most low indices, but the counter kept climbing past the real ceiling.
 
-**Why it's nasty.** The app would boot successfully with garbage payment credentials. Nothing looks
-wrong until a real payment fails.
+**Fix, part one.** Reuse the lowest genuinely free index, and refuse rather than allocate at or beyond the
+maximum. Index 0 is never reused: it's the default a bare client connects to.
 
-**Fix.** An exact-match allowlist of known framework key names, not a suffix pattern.
+**Fix, part two: the fix broke its callers.** Three call sites computed `cache_index = broker_index + 1`, right
+only under the old always-increment behaviour. With reused, non-consecutive indices, that arithmetic could hand
+out an index owned by another app, exactly the collision the ledger exists to prevent. The same sites did bare
+`INSERT`s that now hit unique-constraint errors when a "free" index already had a row.
 
-**Lesson.** Before using a suffix or substring pattern for anything consequential, test it against real
-third-party names. "Looks like a framework variable" is not a safe inference.
+**Final fix.** The allocator takes an `exclude` set, so a caller that needs two indices asks for the second
+properly. Every ledger write is an upsert.
+
+**Lesson.** Changing a function's *guarantees* is a breaking change even when its signature stays the same.
+Callers encode assumptions nobody wrote down.
 
 ---
 
-## 9. A scheduler's idle poll as an unbounded cost
+## 7. The wrong field as a proxy
 
-**Symptom.** A scheduler service crash-looped until systemd gave up
-(`Start request repeated too quickly`), and logging into the app returned HTTP 500.
+**Symptom.** An app got permanently stuck. "Delete certificate" tried a real deletion of a certificate that was
+never issued and failed; "delete permanently" then refused because a field was still set, and the only way to
+clear that field needed the deletion to succeed.
 
-**Investigation.** Both symptoms traced to one cause, confirmed by connecting from the app's own
-environment:
+**Cause.** "Does this app have a certificate?" was answered with "is a subdomain recorded?". The subdomain is
+recorded during *configuration*, long before issuance, so an app that never went live has a subdomain and no
+certificate.
+
+**Made worse by.** A *successful* no-op renewal wiped the expiry field to `NULL`. When a certificate isn't due,
+certbot exits successfully and prints "not yet due for renewal" with no expiry line; the parser found no match
+and wrote `NULL` over a perfectly good date. Recovering it took a forced re-issue.
+
+**Fix.** Use the expiry date, set *only* by a successful issuance, as the proof a certificate exists. Never
+write `NULL` on a non-match: a non-match means "nothing new", not "the old value is gone".
+
+**Lesson.** When a field stands in for an event, choose one that *only* that event writes. And
+`if match else None` is a bug wherever `None` means "erase".
+
+---
+
+## 8. A pattern that matched too much
+
+**Symptom.** Caught in testing, not production: a real vendor API key in a repository's `.env.example` was
+silently replaced with random bytes.
+
+**Cause.** Secret-key generation matched `(^|_)SECRET_KEY$`, the same suffix style used for `ALLOWED_HOSTS` and
+`DEBUG`. But `SECRET_KEY` is a far more crowded suffix among vendor credentials: it also matches
+`STRIPE_SECRET_KEY`. The variable got a random value and was never shown on the form for the real one.
+
+**Why it's nasty.** The app would boot fine with garbage payment credentials, and nothing would look wrong until
+a real payment failed.
+
+**Fix.** An exact-match allowlist of known framework key names instead of a suffix pattern.
+
+**Lesson.** Before a suffix or substring pattern decides anything that matters, test it against real third-party
+names. "Looks like a framework variable" is not a safe inference.
+
+---
+
+## 9. An idle poll with an unbounded cost
+
+**Symptom.** A scheduler service crash-looped until systemd gave up (`Start request repeated too quickly`), and
+signing in to the app returned HTTP 500.
+
+**Investigation.** Both symptoms had one cause, confirmed from the app's own environment:
 
 ```
 OperationalError: connection to server at "ep-example-pooler.REGION.aws.neon.tech", port 5432
 failed: ERROR: Your account or project has exceeded the compute time quota.
 ```
 
-The managed Postgres was refusing every connection. That explains both symptoms:
+The managed Postgres was refusing every connection:
 
-- The scheduler uses a **database-backed** schedule, so it cannot start without Postgres. The Celery
-  *worker* stayed healthy throughout, because it only needs Redis — which is what made this look like a
-  scheduler-specific bug rather than a database outage.
-- Login is a database operation. No database, no authentication, HTTP 500.
+- The scheduler uses a **database-backed** schedule, so it can't start without Postgres. The Celery *worker*
+  stayed healthy throughout because it needs only Redis, which made this look like a scheduler bug rather than a
+  database outage.
+- Signing in is a database operation: no database, no sign-in, HTTP 500.
 
-**Root cause of the quota exhaustion.** The database-backed scheduler polls Postgres every five seconds,
-permanently. The database is serverless and bills by compute-time, autosuspending when idle — so a
-five-second poll means it *never* idles. The scheduler's "idle" state was continuous billable load.
+**Why the quota ran out.** The database-backed scheduler polls Postgres every five seconds, forever. The database
+is serverless, bills by compute time and suspends when idle, so a five-second poll means it *never* idles. The
+scheduler's idle state was continuous billable load.
 
-**Fix.** Make the poll interval configurable and default it high enough that the database can suspend
-between checks. The trade-off is that schedule edits take up to that interval to be noticed, which is
-fine at this scale.
+**Fix.** A configurable poll interval, defaulting high enough for the database to suspend between checks.
+Schedule edits now take up to that interval to be noticed, which is fine at this scale.
 
-**Honest limitation.** This removes the constant drain but not the monthly cap. If the app's periodic
-tasks genuinely hit the database around the clock, the ceiling still applies; removing it means a paid
-tier or self-hosted Postgres.
+**Still true.** This removes the constant drain, not the monthly cap. If an app's periodic tasks really do touch
+the database around the clock, the ceiling still applies; lifting it means a paid tier or self-hosted Postgres.
 
-**Lesson.** "Idle" is component-specific. A polling loop is idle from the poller's perspective and fully
-active from the billing system's. When you adopt a serverless resource, audit everything that touches it
-on a timer.
+**Lesson.** "Idle" depends on who is watching. A polling loop is idle to the poller and fully busy to the billing
+system. When adopting a serverless resource, audit everything that touches it on a timer.
 
 ---
 
 ## Cross-cutting observations
 
-**Real dependencies find real bugs.** Four of the configuration bugs above exist only because testing
-used a real private repository and a real managed database instead of a disposable fixture. A synthetic
-test would have had no `&` in its connection string, no vendor-prefixed secret key, and no pre-existing
-stale rows.
+**Real dependencies find real bugs.** Four of the configuration bugs above exist only because testing used a real
+private repository and a real managed database instead of a disposable fixture. A synthetic test would have had
+no `&` in its connection string, no vendor-prefixed key and no stale rows.
 
-**Silence is the common thread.** Nearly every incident here involved a component doing something
-reasonable-looking instead of failing loudly: falling back to a default broker, honouring the last
-duplicate key, backgrounding at an `&`, writing `NULL` on a non-match. Loud failures get fixed in
-minutes. Silent ones run for days.
+**Silence is the common thread.** Nearly every incident was a component doing something reasonable-looking
+instead of failing loudly: falling back to a default broker, keeping the last duplicate key, backgrounding at an
+`&`, writing `NULL` on a non-match. Loud failures get fixed in minutes; quiet ones run for days.
 
-**An unexplained reboot is not automatically a compromise.** One incident began as "am I hacked?" The
-check — boot history, failed auth attempts, `authorized_keys` mtime, unfamiliar accounts, listening
-sockets, process ownership — found a hypervisor-level reset with no in-guest trigger and no indicators
-of compromise. The real finding was operational: the panel had no service unit and didn't come back after
-a reboot. Verify with evidence before concluding in *either* direction.
+**An unexplained reboot is not automatically a compromise.** One incident started as "am I hacked?". Checking
+boot history, failed logins, `authorized_keys` timestamps, unfamiliar accounts, listening sockets and process
+owners found a hypervisor-level reset with no trigger inside the guest and no sign of compromise. The real
+finding was operational: the panel had no service unit and didn't come back after a reboot. Verify with evidence
+before concluding in *either* direction.

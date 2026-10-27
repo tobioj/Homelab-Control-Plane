@@ -1,0 +1,58 @@
+# Example: the workflow every Pushlane repository starts from (.forgejo/workflows/ci.yml).
+# Users edit the "test" job. The jobs below the marker are managed by Pushlane: forward-to-github pushes the
+# tested commit to GitHub only if "test" passed, and notify sends an optional phone notification.
+#
+# Pushlane CI workflow.
+# GitHub ignores the .forgejo/ folder, so this never uses GitHub Actions minutes.
+# Edit the "test" job freely. Keep the two jobs at the bottom: they push to GitHub only after "test" passes.
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["**"]
+
+# a newer push to the same branch cancels the older run, so only the latest commit is forwarded
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run tests
+        run: |
+          npm ci
+          npm test
+
+  # ---- managed by Pushlane: do not edit below this line ----
+  forward-to-github:
+    needs: [test]
+    runs-on: forwarder
+    timeout-minutes: 15
+    steps:
+      - name: Push this commit to GitHub
+        run: ci-forward
+        env:
+          GH_REPO: ${{ vars.GH_REPO }}
+          GH_FORCE_PUSH: ${{ vars.GH_FORCE_PUSH }}
+          GH_DEPLOY_KEY: ${{ secrets.GH_DEPLOY_KEY }}
+          FORGEJO_TOKEN: ${{ github.token }}
+
+  notify:
+    needs: [test, forward-to-github]
+    if: ${{ always() && vars.NTFY_URL != '' }}
+    runs-on: forwarder
+    timeout-minutes: 5
+    steps:
+      - name: Send notification
+        run: ci-notify
+        env:
+          NTFY_URL: ${{ vars.NTFY_URL }}
+          NEEDS_JSON: ${{ toJSON(needs) }}

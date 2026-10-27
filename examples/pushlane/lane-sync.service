@@ -1,0 +1,11 @@
+# Example: keeps both lanes' account lists in step with Forgejo (new accounts and organisations get the
+# shared lane, deleted ones are dropped). A lane restarts only when its accounts changed, and never kills a job.
+[Unit]
+Description=Keep the Pushlane job lanes in step with Forgejo's accounts
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/ci-platform/bin/ci-admin sync-lanes
+TimeoutStartSec=20min

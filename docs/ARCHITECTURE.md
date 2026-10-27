@@ -1,121 +1,121 @@
-# Architecture
+# Control Panel architecture
 
-A component-by-component walkthrough. For the visual overview see
-[the topology diagram](diagrams/01-topology.svg); for *why* things are shaped this way see
-[DESIGN-DECISIONS.md](DESIGN-DECISIONS.md).
+How the deploy tool is put together, one component at a time. For the picture, see the
+[topology diagram](diagrams/01-topology.svg); for the reasoning behind each shape, see
+[DESIGN-DECISIONS.md](DESIGN-DECISIONS.md). Pushlane CI has its own document:
+[PUSHLANE-CI.md](PUSHLANE-CI.md).
 
 ---
 
-## Physical and virtual layout
+## Where it sits
 
-| Layer | What runs there |
+| Layer | Role in the deploy story |
 | --- | --- |
-| Hypervisor | Type-1 bare metal. Snapshots taken before risky changes. |
-| `app-node` (10.10.0.20) | Public data plane: nginx, gunicorn, Celery worker + beat per app |
-| `infra-node` (10.10.0.21) | Control plane: the panel, shared Redis, observability stack, timers |
-| Router | NAT, one dynamic WAN IP, a single forwarded `:443` |
+| `hv-01` | Proxmox VE host. Snapshots before risky changes; nightly backups of every stateful guest. |
+| `edge-node` (`10.10.0.10`) | The **data plane**: nginx, and one gunicorn + Celery worker + beat set per deployed app. |
+| `infra-node` (`10.10.0.11`) | The **control plane**: the panel, the shared Redis, the observability stack and the timers. |
+| Router | NAT with one dynamic WAN IP and a single forwarded port, `443`. |
 
-Both VMs run the same LTS Linux release with 4 vCPU / ~6 GB RAM. Everything is addressed **by IP, never
-by hostname** — the app node's own hostname collides with the hypervisor's, a cosmetic misconfiguration
-that would silently make hostname-based addressing ambiguous.
+Both nodes run the same LTS Linux release. The panel addresses them **by IP, never by hostname**: one guest's
+hostname once matched the hypervisor's, a harmless typo that would have made name-based addressing ambiguous.
 
 ---
 
-## Control plane: the panel
+## The panel
 
-A FastAPI application (~5.6k LOC of Python) served by uvicorn under systemd with `Restart=always`, bound
-to a LAN address only.
+A FastAPI application served by uvicorn under systemd (`Restart=always`), bound to a LAN address only.
 
-### Module responsibilities
+### Modules
 
 | Module | Responsibility |
 | --- | --- |
-| `main.py` | App construction, router mounting |
+| `main.py` | Builds the app and mounts the routers |
 | `config.py` | Settings from the environment, with defaults |
-| `db.py` | Schema, idempotent column migrations, seeding, Redis index allocation |
-| `auth.py` | Session-cookie auth, bcrypt hashing, login/admin dependencies |
-| `crypto.py` | Fernet encrypt/decrypt for secrets at rest |
-| `audit.py` | Append-only action log |
-| `safety.py` | Protected-app and protected-filename denylists, subdomain uniqueness |
+| `db.py` | Schema, idempotent column migrations, seeding, the Redis index allocator |
+| `auth.py` | Session cookies, bcrypt, login and admin dependencies |
+| `crypto.py` | Fernet encryption and decryption for secrets at rest |
+| `audit.py` | The append-only action log |
+| `safety.py` | Protected apps, protected file names, subdomain ownership |
 | `ssh_client.py` | **The only** module that opens a connection to a managed host |
-| `actions.py` | Generic preview → confirm → execute pipeline |
-| `onboarding.py` | Wizard business logic — the largest module by far |
-| `dns_cert.py` | DNS verification, DNS-01 issuance, proxy install, HTTPS verification |
-| `decommission.py` | Ordered shutdown: stop → free resources → delete files → delete cert |
+| `actions.py` | The generic preview, confirm, execute pipeline |
+| `onboarding.py` | The wizard's business logic, by far the largest module |
+| `dns_cert.py` | DNS checks, DNS-01 issuance, nginx install, the public HTTPS check |
 | `lifecycle.py` | Pause, resume, recommission, permanent delete |
-| `deploy_plan.py` | Push-to-deploy with an incoming-commit preview |
-| `observability.py` | Per-app error tracking, log shipping and push-alert wiring |
-| `deploy_templates.py` | Renders systemd units and proxy configs from Jinja templates |
-| `ddns.py` / `uptime.py` / `renewal.py` | Standalone `oneshot` entrypoints driven by timers |
-| `metrics.py` | Per-unit memory, restart count and uptime in one call |
-| `routers/` | One module per route group |
-| `templates/` | Server-rendered HTML |
+| `decommission.py` | Ordered shutdown: stop, free resources, delete files, delete the certificate |
+| `github_actions.py` | The CI deploy workflow and its dedicated key |
+| `observability.py` | Per-app error tracking, log shipping and push alerts |
+| `metrics.py` | Memory, restart count and uptime per unit, in one call |
+| `ddns.py`, `uptime.py`, `renewal.py` | Standalone `oneshot` entry points run by timers |
+| `routers/`, `templates/` | One router per route group; server-rendered HTML |
+
+Two modules the code imports are not part of this public extract: `deploy_plan.py` (push-to-deploy, described
+[below](#push-to-deploy)) and `deploy_templates.py` (renders the Jinja files in `unit_templates/` into concrete
+systemd units and nginx vhosts).
 
 ### The SSH chokepoint
 
-Every remote operation funnels through one module. It exposes:
+Every remote operation goes through one module, which offers:
 
-- `run()` — execute a command. **Never raises.** Timeouts return `124`, connection errors `255`.
-- `write_file()` — SFTP. The only path by which secret content reaches a managed host.
-- `check_reachable()` / `unit_status()` — read-only probes.
-- `cached_unit_status()` — an 8-second TTL cache, used *only* by the dashboard grid. Detail pages and
-  post-action verification always read live state, because that's precisely when a stale answer misleads.
+- `run()`: execute a command. **It never raises.** A timeout returns `124`, a connection failure `255`.
+- `write_file()`: SFTP, the only route by which secret content reaches a managed host.
+- `check_reachable()` and `unit_status()`: read-only probes.
+- `cached_unit_status()`: an 8-second cache used **only** by the dashboard grid. Detail pages and post-action
+  checks always read live state, because that is exactly when a stale answer misleads.
 
-Authentication is a single dedicated key. The target host may be passed per call, so additional app hosts
-need no code change.
+It authenticates with one dedicated key. The target host is a parameter, so adding another app host needs no
+code change.
 
 ### State
 
 One SQLite database:
 
-| Table | Contents |
+| Table | Holds |
 | --- | --- |
-| `projects` | One row per managed app: repo, branch, framework, entrypoint, allocated Redis indices, subdomain, status, onboarding position, certificate expiry |
-| `project_env_vars` | Per-app configuration. Values are **always** ciphertext. |
+| `projects` | One row per managed app: repo, branch, framework, entrypoint, Redis indices, subdomain, status, wizard position, certificate expiry |
+| `project_env_vars` | Per-app configuration; values are **always** ciphertext |
 | `redis_ledger` | One row per Redis database index: owner, purpose, status |
-| `pending_actions` | Previewed commands awaiting confirmation, plus their results |
-| `project_health` | Latest probe result, consecutive failures, last-alerted state, cert days remaining |
-| `audit_log` | Append-only record of every mutating action |
+| `pending_actions` | Previewed commands waiting for confirmation, and their results |
+| `project_health` | The latest probe, consecutive failures, last alerted state, certificate days left |
+| `audit_log` | Every mutating action, append-only |
 | `users` | Operator accounts (bcrypt) |
 
-Schema changes are applied by an idempotent `_ensure_column()` pass at startup.
+Schema changes are applied at startup by an idempotent `_ensure_column()` pass.
 
 ---
 
-## Data plane: how an app is assembled
+## The data plane: how an app is assembled
 
 ```
 /srv/apps/<app>/
 ├── <repository contents>
-├── venv/                 # per-app virtualenv
-├── staticfiles/          # collected static assets, served directly by nginx
-└── .env                  # 0600, delivered over SFTP, never in version control
+├── venv/            # the app's own virtualenv
+├── staticfiles/     # collected static assets, served by nginx directly
+└── .env             # 0600, delivered over SFTP, never in version control
 ```
 
 Three systemd units per app, all reading the same `.env` through `EnvironmentFile=`:
 
-| Unit | Command shape |
+| Unit | Shape |
 | --- | --- |
-| `gunicorn@<app>` | 2 workers, `gthread`, bound to a unix socket, 120s timeout |
-| `celery@<app>` | worker, concurrency 2 |
-| `celerybeat@<app>` | beat; for Django, with the database-backed scheduler |
+| `gunicorn@<app>` | 2 workers, `gthread`, a unix socket, 120 s timeout |
+| `celery@<app>` | Worker, concurrency 2 |
+| `celerybeat@<app>` | Beat; for Django, the database-backed scheduler |
 
-Notable unit settings:
+Settings that matter:
 
-- **`RuntimeDirectoryPreserve=yes`** — mandatory. Without it, a restart can delete the shared runtime
-  directory and take every app's socket with it.
-- **`Restart=on-failure`** for app units; `Restart=always` for the panel itself.
-- **Unix sockets, not TCP ports** — an app is reachable only through the proxy, enforced by filesystem
-  permissions.
+- **`RuntimeDirectoryPreserve=yes`** is mandatory. Without it a restart can delete the shared runtime folder and
+  every app's socket with it.
+- **`Restart=on-failure`** for app units, **`Restart=always`** for the panel itself.
+- **Unix sockets, not TCP ports**: an app is reachable only through the proxy, enforced by file permissions.
 
-The scheduler flag is framework-gated. The database-backed scheduler is Django-specific; rendering it
-into a non-Django unit produces a service that cannot start.
+The scheduler flag depends on the framework. The database-backed scheduler is Django-only; rendered into
+another framework's unit it produces a service that can't start.
 
 ---
 
 ## Request routing
 
-nginx terminates TLS and proxies to the per-app socket:
+nginx terminates TLS and proxies to the app's socket:
 
 ```nginx
 server {
@@ -134,7 +134,7 @@ server {
 }
 ```
 
-A **catch-all vhost is mandatory** and sorts first by filename:
+A **catch-all vhost is mandatory** and sorts first by file name:
 
 ```nginx
 server {
@@ -146,90 +146,89 @@ server {
 }
 ```
 
-Without it, a request with an unrecognised `Host` header falls through to whichever vhost nginx happens to
-consider first — meaning one app answers for a domain that isn't its own.
+Without it, a request for an unknown `Host` lands on whichever vhost nginx considers first, and one app ends up
+answering for a domain that isn't its own.
 
-The `/static/` alias is also framework-gated: it points at Django's collected-static output. For a
-framework that doesn't produce that directory, the alias would shadow a route the app serves itself.
+The `/static/` alias is framework-dependent too: it points at Django's collected output. For a framework that
+doesn't produce that folder it would shadow a route the app serves itself.
 
 ---
 
 ## Redis as a ledgered shared resource
 
-One Redis instance on the control plane serves every app. It is configured with 16 databases, so valid
-indices are 0–15. Each app receives distinct indices for its broker and its cache.
+One Redis instance on the control plane serves every app. It has 16 databases (indices 0 to 15), and each app
+gets distinct indices for its broker and its cache.
 
-The `redis_ledger` table is the allocator's source of truth. Allocation:
+The `redis_ledger` table is the allocator's source of truth. The allocator:
 
-1. Prefer the lowest genuinely-free index over incrementing a counter.
-2. Refuse rather than allocate at or beyond the configured maximum.
-3. Exclude index 0 — the protocol default a bare client connects to, not a safely reusable slot.
-4. Accept an `exclude` set, so a caller needing two indices requests the second one properly instead of
-   doing arithmetic on the first.
-5. Every write is an upsert, because a "free" index may be an existing row.
+1. Prefers the lowest index that is genuinely free over incrementing a counter.
+2. Refuses, rather than allocating at or beyond the configured maximum.
+3. Never hands out index 0, the default a bare client connects to.
+4. Accepts an `exclude` set, so a caller that needs two indices asks for the second properly instead of adding
+   one to the first.
+5. Writes every row as an upsert, because a "free" index may already have a row.
 
-Points 3–5 are all consequences of [incident #6](INCIDENTS.md#6-a-resource-allocator-with-no-knowledge-of-its-own-limit).
+Points 3 to 5 all came out of [incident #6](INCIDENTS.md#6-an-allocator-that-didnt-know-its-limit).
 
-**Redis lives on the control plane, not with the apps.** Every app's broker URL points back across the
-LAN regardless of which host the app runs on.
+**Redis lives on the control plane, not next to the apps.** Every broker URL points back across the LAN,
+whichever host the app runs on.
 
 ---
 
 ## Certificates over DNS-01
 
-Inbound `:80` is blocked by the ISP, so HTTP-01 validation is impossible. The flow:
+The ISP blocks inbound port 80, so HTTP-01 validation is impossible. The flow:
 
-1. The panel stages an authentication hook script on the app host over SFTP.
-2. `certbot certonly` runs with a manual DNS hook.
-3. The hook publishes the challenge TXT record via the DNS provider's HTTP API.
-4. It polls **two independent public resolvers** until both report the expected value, then waits out a
-   grace period.
-5. Validation proceeds; the certificate is issued.
-6. Both hook scripts are deleted regardless of outcome, so the API token doesn't persist on disk.
+1. The panel stages an auth hook script on the app host over SFTP.
+2. `certbot certonly` runs with that manual DNS hook.
+3. The hook publishes the challenge TXT record through the DNS provider's HTTP API.
+4. It polls **two independent public resolvers** until both return the expected value, then waits a grace
+   period.
+5. Validation runs and the certificate is issued.
+6. Both hook scripts are deleted whatever the outcome, so the API token doesn't stay on disk.
 
-The expiry date is parsed from the tool's own output at issuance and stored. There is no live read
-available — the certificate directory is root-only and unreadable to the deploy user.
+The expiry date is parsed from certbot's own output and stored; there is nothing to read live, because the
+certificate folder is root-only and invisible to the deploy user.
 
-The whole run completes in well under a minute, synchronously, with no backgrounded remote process and no
-state held in the panel's memory across requests.
+The whole run takes under a minute, synchronously: no backgrounded remote process, no state held in the
+panel's memory between requests.
 
-> The provider always returns HTTP 200, even on failure — the response *body* is the only real signal.
-> The same trap applies to its DNS update endpoint.
+> The provider answers HTTP 200 even when it fails; only the response *body* tells you what happened. Its DNS
+> update endpoint behaves the same way.
 
 ---
 
 ## Reconciliation timers
 
-Three `oneshot` services, each deriving its work from the database:
+Three `oneshot` services, each working out its targets from the database:
 
-| Timer | Interval | Behaviour |
+| Timer | Every | Behaviour |
 | --- | --- | --- |
-| DDNS | 5 min | Collects every non-decommissioned app's subdomain and points them at the current WAN IP in one call. Protected apps are excluded — their records are owned elsewhere. |
-| Uptime | 3 min | Real HTTPS GET of each public URL. Anything under 500 counts as up (a 404 at `/` is a healthy app with no root route). Records latency and certificate days remaining. |
-| Renewal | daily | Renews certificates approaching expiry, with a randomised delay to avoid a thundering herd. |
+| DDNS | 5 min | Collects the subdomain of every app that isn't decommissioned and points them all at the current WAN IP in one call. Protected apps are skipped; their records are managed elsewhere. |
+| Uptime | 3 min | A real HTTPS GET of each public URL. Anything below 500 counts as up (a 404 at `/` is a healthy app without a root route). Records latency and certificate days left. |
+| Renewal | daily | Renews certificates that are close to expiry, after a random delay so they don't all fire at once. |
 
-Alerting is **transition-based**: a push notification fires on up→down and down→up after a failure
-threshold, deduplicated by last-alerted state, plus a certificate-expiry warning. A persistent outage
-notifies once, not every three minutes.
+Alerts fire on **transitions**: up to down and down to up after a failure threshold, deduplicated by the last
+alerted state, plus a warning before a certificate expires. A long outage notifies once, not every three
+minutes.
 
-Because the DDNS request originates from the control plane, the provider sees the household's real WAN IP
-as the request source — no IP detection needed.
+Because the DDNS call leaves from the control plane, the provider sees the household's real WAN IP as the
+source address; no IP detection is needed.
 
 ---
 
 ## Push-to-deploy
 
-For an already-onboarded app, redeployment is a preview of real work:
+For an app that is already live, a redeploy is a preview of the real change:
 
-1. Read-only `git fetch` plus a log of commits between local `HEAD` and the remote branch — so the
+1. A read-only `git fetch` and a log of the commits between the local `HEAD` and the remote branch, so the
    preview shows *what will actually land*.
-2. The generated command pulls with the app's deploy key, installs dependencies, runs migrations and
-   collects static files, then restarts each unit through the scoped `sudoers` grant.
-3. It flows through the same generic confirm route as any other action — no bespoke execution path.
+2. The generated command pulls with the app's deploy key, installs dependencies, runs migrations, collects
+   static files and restarts each unit through the scoped `sudoers` grant.
+3. It goes through the same confirm route as every other action; there is no special execution path.
 
-The panel also generates a CI workflow and a dedicated CI key for GitHub-triggered deploys. That key is
-separate from both the per-app deploy key and the orchestrator key; its private half is displayed once and
-never stored.
+The panel can also generate a CI workflow with its own CI key for deploys triggered from GitHub. That key is
+separate from both the deploy key and the orchestrator key; its private half is shown once and never stored.
 
 ---
 
@@ -237,32 +236,31 @@ never stored.
 
 Enabling observability for an app:
 
-1. Creates its project via the error tracker's API and reads back the ingest key.
-2. Grants a dedicated push-notification topic.
+1. Creates the app's project through the error tracker's API and reads back its ingest key.
+2. Grants it a dedicated push-notification topic.
 3. Injects the shared log-shipping credentials.
 
-None of these variable names were invented here — the applications already expected them. This is
-auto-filling values the tool already asks for.
+None of these variable names were invented here; the apps already expected them. The panel fills in values it
+would otherwise ask for.
 
-Deployment state is reported as **three** states, not a boolean: `in_sync`, `saved_not_deployed`, and
-`deployed_but_different`. The comparison normalises shell quoting first, because values written by the
-panel are quoted on disk while values hand-edited on the host are not.
+Deployment state has **three** values, not two: `in_sync`, `saved_not_deployed` and `deployed_but_different`.
+The comparison normalises shell quoting first, because values the panel writes are quoted on disk and values
+edited by hand on the host are not.
 
-The log viewer is a polled `journalctl` snapshot over SSH, refreshed every 4 seconds. It is not a
-streaming follow — there is no WebSocket infrastructure here. Service names are validated against the
-app's own enabled-service list before reaching a command.
+The log viewer is a `journalctl` snapshot over SSH, refreshed every 4 seconds; it is not a streaming follow.
+Service names are checked against the app's own enabled services before they reach a command.
 
 ---
 
 ## Failure modes and recovery
 
-| Failure | Behaviour |
+| Failure | What happens |
 | --- | --- |
-| App host unreachable | Every remote call returns exit 255; the UI reports it instead of raising |
-| Panel process dies | systemd restarts it (`Restart=always`) |
-| Host reboots | Units are enabled; apps come back. The panel's own unit was the gap this exposed. |
-| Managed database unavailable | Web requests 500 and DB-backed schedulers fail to start; workers survive on Redis alone |
-| WAN IP change | DDNS timer corrects within 5 minutes |
-| Certificate near expiry | Daily renewal timer, plus a push warning under a day threshold |
-| Broken proxy config | Compound commands self-clean, so validation stays passable for other apps |
-| Duplicate confirm submit | Atomic claim; the loser gets a clear error |
+| App host unreachable | Every remote call returns exit 255; the UI reports it instead of crashing |
+| The panel process dies | systemd restarts it |
+| A host reboots | Units are enabled, so apps come back. The panel's own unit was the gap a reboot once exposed. |
+| The managed database is down | Web requests fail and database-backed schedulers can't start; workers carry on with Redis alone |
+| The WAN IP changes | The DDNS timer corrects it within 5 minutes |
+| A certificate nears expiry | The daily renewal timer, plus a push warning below a threshold |
+| A broken proxy config | Compound commands clean up after themselves, so validation keeps passing for every other app |
+| A double-submitted confirm | The atomic claim lets one through; the other gets a clear error |

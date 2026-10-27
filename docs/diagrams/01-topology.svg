@@ -1,5 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1060 800" width="1060" height="800" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 840" width="1200" height="840" font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
   <style>
+    .bg    { fill:#ffffff; }
     .frame { fill:#f8fafc; stroke:#cbd5e1; stroke-width:1.5; }
     .ext   { fill:#ede9fe; stroke:#7c5cd6; stroke-width:1.5; }
     .vm    { fill:#ffffff; stroke:#475569; stroke-width:2; }
@@ -8,177 +9,184 @@
     .svca  { fill:#fef3c7; stroke:#b4840e; stroke-width:1.2; }
     .svcr  { fill:#fee2e2; stroke:#c2483f; stroke-width:1.2; }
     .net   { fill:#e2e8f0; stroke:#475569; stroke-width:1.5; }
+    .th    { fill:#0f172a; font-size:18px; font-weight:700; }
     .tb    { fill:#0f172a; font-size:14px; font-weight:700; }
-    .th    { fill:#0f172a; font-size:17px; font-weight:700; }
+    .tn    { fill:#0f172a; font-size:12.5px; font-weight:700; }
     .ts    { fill:#475569; font-size:11.5px; }
     .tm    { fill:#334155; font-size:11.5px; font-style:italic; }
+    .tp    { fill:#6d4fc2; font-size:11.5px; font-style:italic; }
+    .tr    { fill:#b23b33; font-size:11.5px; font-weight:700; }
     .ln    { stroke:#475569; stroke-width:2; fill:none; }
     .lnr   { stroke:#c2483f; stroke-width:3; fill:none; }
     .lnp   { stroke:#7c5cd6; stroke-width:2; fill:none; stroke-dasharray:6 4; }
-    .lnd   { stroke:#475569; stroke-width:2; fill:none; stroke-dasharray:5 3; }
+    .lnd   { stroke:#475569; stroke-width:1.6; fill:none; stroke-dasharray:5 3; }
+    .bound { stroke:#94a3b8; stroke-width:1.5; stroke-dasharray:8 5; }
   </style>
   <defs>
     <marker id="a" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" refX="10" refY="5" orient="auto">
       <path d="M0,0 L0,10 L11,5 z" fill="#475569"/>
     </marker>
-    <marker id="ar" markerUnits="userSpaceOnUse" markerWidth="14" markerHeight="14" refX="11" refY="5.5" orient="auto">
-      <path d="M0,0 L0,11 L12,5.5 z" fill="#c2483f"/>
+    <marker id="ar" markerUnits="userSpaceOnUse" markerWidth="14" markerHeight="14" refX="11" refY="6" orient="auto">
+      <path d="M0,0 L0,12 L12,6 z" fill="#c2483f"/>
     </marker>
     <marker id="ap" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" refX="10" refY="5" orient="auto">
       <path d="M0,0 L0,10 L11,5 z" fill="#7c5cd6"/>
     </marker>
   </defs>
 
-  <rect x="0" y="0" width="1060" height="800" fill="#ffffff"/>
+  <rect class="bg" x="0" y="0" width="1200" height="840"/>
 
-  <text class="th" x="20" y="28">Homelab topology — control plane vs. data plane</text>
-  <text class="ts" x="20" y="48">Two VMs on one hypervisor. The infra node orchestrates deployments; the app node serves public traffic. All addresses illustrative.</text>
+  <!-- title -->
+  <text class="th" x="30" y="34">Homelab topology: control plane, data plane and CI</text>
+  <text class="ts" x="30" y="56">One Proxmox host, four guests, one job each. Only edge-node is reachable from the internet. Names, addresses and numbers are illustrative.</text>
 
-  <!-- ============ EXTERNAL SERVICES (ordered so edges stay short) ============ -->
-  <rect class="ext" x="20"  y="66" width="200" height="54" rx="8"/>
-  <text class="tb" x="120" y="88"  text-anchor="middle">Managed Postgres</text>
-  <text class="ts" x="120" y="106" text-anchor="middle">serverless · one DB per app</text>
+  <!-- outside the house -->
+  <rect class="ext" x="30" y="80" width="210" height="70" rx="8"/>
+  <text class="tn" x="44" y="104">Visitors and developers</text>
+  <text class="ts" x="44" y="122">https://&lt;app&gt;.duckdns.org</text>
+  <text class="ts" x="44" y="138">git push to the CI</text>
 
-  <rect class="ext" x="232" y="66" width="200" height="54" rx="8"/>
-  <text class="tb" x="332" y="88"  text-anchor="middle">Vendor APIs</text>
-  <text class="ts" x="332" y="106" text-anchor="middle">payments · shipping · mail</text>
+  <rect class="ext" x="262" y="80" width="210" height="70" rx="8"/>
+  <text class="tn" x="276" y="104">Let's Encrypt</text>
+  <text class="ts" x="276" y="122">certificates over DNS-01</text>
+  <text class="ts" x="276" y="138">(inbound :80 is blocked)</text>
 
-  <rect class="ext" x="444" y="66" width="170" height="54" rx="8"/>
-  <text class="tb" x="529" y="88"  text-anchor="middle">GitHub</text>
-  <text class="ts" x="529" y="106" text-anchor="middle">source + Actions</text>
+  <rect class="ext" x="494" y="80" width="210" height="70" rx="8"/>
+  <text class="tn" x="508" y="104">DuckDNS</text>
+  <text class="ts" x="508" y="122">dynamic DNS</text>
+  <text class="ts" x="508" y="138">+ ACME TXT records</text>
 
-  <rect class="ext" x="626" y="66" width="190" height="54" rx="8"/>
-  <text class="tb" x="721" y="88"  text-anchor="middle">Let's Encrypt</text>
-  <text class="ts" x="721" y="106" text-anchor="middle">DNS-01 certificates</text>
+  <rect class="ext" x="726" y="80" width="210" height="70" rx="8"/>
+  <text class="tn" x="740" y="104">Managed Postgres · APIs</text>
+  <text class="ts" x="740" y="122">serverless databases,</text>
+  <text class="ts" x="740" y="138">payment and mail vendors</text>
 
-  <rect class="ext" x="828" y="66" width="212" height="54" rx="8"/>
-  <text class="tb" x="934" y="88"  text-anchor="middle">DuckDNS</text>
-  <text class="ts" x="934" y="106" text-anchor="middle">dynamic DNS + ACME TXT</text>
+  <rect class="ext" x="958" y="80" width="214" height="70" rx="8"/>
+  <text class="tn" x="972" y="104">GitHub</text>
+  <text class="ts" x="972" y="122">receives only passing commits</text>
+  <text class="ts" x="972" y="138">App: webhooks, pushlane/ci</text>
 
-  <!-- ============ PUBLIC VISITOR ============ -->
-  <rect class="net" x="395" y="150" width="270" height="44" rx="8"/>
-  <text class="tb" x="530" y="172" text-anchor="middle">Public visitor</text>
-  <text class="ts" x="530" y="187" text-anchor="middle">https://&lt;app&gt;.duckdns.org</text>
+  <line class="bound" x1="20" y1="172" x2="1180" y2="172"/>
+  <text class="tm" x="1150" y="166" text-anchor="end">home network boundary</text>
 
-  <line x1="20" y1="206" x2="1040" y2="206" stroke="#94a3b8" stroke-width="1" stroke-dasharray="4 4"/>
-  <text class="tm" x="1040" y="201" text-anchor="end">home network boundary</text>
+  <rect class="net" x="450" y="186" width="300" height="54" rx="8"/>
+  <text class="tn" x="600" y="208" text-anchor="middle">Home router · NAT</text>
+  <text class="ts" x="600" y="226" text-anchor="middle">one dynamic WAN IP · only :443 forwarded</text>
 
-  <!-- ============ ROUTER ============ -->
-  <rect class="net" x="400" y="218" width="260" height="52" rx="8"/>
-  <text class="tb" x="530" y="239" text-anchor="middle">Home router — NAT</text>
-  <text class="ts" x="530" y="257" text-anchor="middle">one dynamic WAN IP · :443 forwarded</text>
+  <!-- hypervisor -->
+  <rect class="frame" x="20" y="262" width="1160" height="564" rx="12"/>
+  <text class="tb" x="36" y="286">hv-01 · Proxmox VE · private LAN 10.10.0.0/24</text>
+  <text class="ts" x="36" y="304">two spinning disks · nightly + weekly backups · see proxmox-homelab</text>
 
-  <!-- ============ HYPERVISOR FRAME ============ -->
-  <rect class="frame" x="20" y="282" width="1020" height="480" rx="12"/>
-  <text class="th" x="38" y="308">Hypervisor (type-1, bare metal) · private LAN 10.10.0.0/24</text>
-  <text class="ts" x="38" y="326">Nothing here is internet-reachable except via the router's single :443 forward.</text>
+  <!-- edge-node -->
+  <rect class="vm" x="40" y="318" width="520" height="222" rx="10"/>
+  <text class="tb" x="56" y="340">edge-node · 10.10.0.10 · EDGE AND DATA PLANE</text>
+  <rect class="svc" x="56" y="352" width="488" height="52" rx="6"/>
+  <text class="tn" x="72" y="373">nginx</text>
+  <text class="ts" x="72" y="392">TLS for every site · catch-all returns 444 · per-route rate limits</text>
+  <rect class="svcr" x="56" y="420" width="234" height="104" rx="6"/>
+  <text class="tn" x="72" y="440">fail2ban and alerts</text>
+  <text class="ts" x="72" y="458">auth · rate-limit · scanner jails</text>
+  <text class="ts" x="72" y="474">repeat offenders: 7-day ban</text>
+  <text class="ts" x="72" y="490">phone alerts · daily digest</text>
+  <text class="ts" x="72" y="506">bad webhook signature: 403</text>
+  <rect class="svcg" x="306" y="420" width="238" height="104" rx="6"/>
+  <text class="tn" x="322" y="440">deployed apps</text>
+  <text class="ts" x="322" y="458">gunicorn · celery · beat per app</text>
+  <text class="ts" x="322" y="474">unix sockets, only via nginx</text>
+  <text class="ts" x="322" y="490">/srv/apps/&lt;app&gt;/ · .env 0600</text>
+  <text class="ts" x="322" y="506">systemd, Restart=on-failure</text>
 
-  <!-- ===== APP NODE ===== -->
-  <rect class="vm" x="40" y="356" width="470" height="390" rx="10"/>
-  <path class="svcr" d="M40 366 a10 10 0 0 1 10 -10 h450 a10 10 0 0 1 10 10 v20 h-470 z"/>
-  <text class="tb" x="58" y="377">app-node · 10.10.0.20 · DATA PLANE</text>
+  <!-- infra-node -->
+  <rect class="vm" x="640" y="318" width="520" height="222" rx="10"/>
+  <text class="tb" x="656" y="340">infra-node · 10.10.0.11 · CONTROL PLANE</text>
+  <rect class="svc" x="656" y="352" width="488" height="52" rx="6"/>
+  <text class="tn" x="672" y="373">Control Panel · FastAPI + Jinja2 + htmx</text>
+  <text class="ts" x="672" y="392">wizard · preview → confirm → execute · SQLite · Fernet secrets · audit log</text>
+  <rect class="svca" x="656" y="420" width="164" height="104" rx="6"/>
+  <text class="tn" x="670" y="440">Redis (shared)</text>
+  <text class="ts" x="670" y="458">16 DBs, ledgered</text>
+  <text class="ts" x="670" y="474">broker + cache</text>
+  <text class="ts" x="670" y="490">per app</text>
+  <rect class="svc" x="836" y="420" width="154" height="104" rx="6"/>
+  <text class="tn" x="850" y="440">systemd timers</text>
+  <text class="ts" x="850" y="458">DDNS · 5 min</text>
+  <text class="ts" x="850" y="474">uptime · 3 min</text>
+  <text class="ts" x="850" y="490">renewal · daily</text>
+  <rect class="svcg" x="1006" y="420" width="138" height="104" rx="6"/>
+  <text class="tn" x="1020" y="440">observability</text>
+  <text class="ts" x="1020" y="458">Grafana · Loki</text>
+  <text class="ts" x="1020" y="474">GlitchTip</text>
+  <text class="ts" x="1020" y="490">ntfy push</text>
 
-  <rect class="svc" x="58" y="400" width="434" height="46" rx="6"/>
-  <text class="tb" x="74" y="420">nginx</text>
-  <text class="ts" x="74" y="437">TLS termination · one vhost per app · catch-all returns 444</text>
+  <!-- git-node -->
+  <rect class="vm" x="40" y="580" width="520" height="230" rx="10"/>
+  <text class="tb" x="56" y="602">git-node · 10.10.0.30 · PUSHLANE SERVER (LXC)</text>
+  <rect class="svc" x="56" y="614" width="488" height="52" rx="6"/>
+  <text class="tn" x="72" y="635">Forgejo v15 LTS</text>
+  <text class="ts" x="72" y="654">private repos · 2FA for every account · plans and quotas · workflow engine</text>
+  <rect class="svcg" x="56" y="682" width="234" height="112" rx="6"/>
+  <text class="tn" x="72" y="702">Pushlane API</text>
+  <text class="ts" x="72" y="720">job logs · re-run · cancel</text>
+  <text class="ts" x="72" y="736">checked with the caller's token</text>
+  <text class="ts" x="72" y="752">agents.md, run as a test</text>
+  <text class="ts" x="72" y="768">for people and AI agents</text>
+  <rect class="svca" x="306" y="682" width="238" height="112" rx="6"/>
+  <text class="tn" x="322" y="702">GitHub sync (App)</text>
+  <text class="ts" x="322" y="720">signature-checked webhooks</text>
+  <text class="ts" x="322" y="736">fast-forward or create,</text>
+  <text class="ts" x="322" y="752">never force, never delete</text>
+  <text class="ts" x="322" y="768">posts pushlane/ci statuses</text>
 
-  <text class="ts" x="58" y="466">per application — one set of units per deployed app:</text>
+  <!-- ci-runner -->
+  <rect class="vm" x="640" y="580" width="520" height="230" rx="10"/>
+  <text class="tb" x="656" y="602">ci-runner · 10.10.0.40 · CI JOBS (VM)</text>
+  <rect class="svc" x="656" y="614" width="234" height="76" rx="6"/>
+  <text class="tn" x="672" y="634">priority lane</text>
+  <text class="ts" x="672" y="652">priority accounts only</text>
+  <text class="ts" x="672" y="668">3 jobs at once</text>
+  <rect class="svc" x="906" y="614" width="238" height="76" rx="6"/>
+  <text class="tn" x="922" y="634">shared lane</text>
+  <text class="ts" x="922" y="652">everyone else</text>
+  <text class="ts" x="922" y="668">2 jobs at once</text>
+  <rect class="svcr" x="656" y="706" width="234" height="88" rx="6"/>
+  <text class="tn" x="672" y="726">job isolation</text>
+  <text class="ts" x="672" y="744">Docker · user-namespace remap</text>
+  <text class="ts" x="672" y="760">no privileged mode, no socket</text>
+  <text class="ts" x="672" y="776">CPU · memory · pid · time limits</text>
+  <rect class="svcg" x="906" y="706" width="238" height="88" rx="6"/>
+  <text class="tn" x="922" y="726">cache and forwarder</text>
+  <text class="ts" x="922" y="744">one cache, entries per repo</text>
+  <text class="ts" x="922" y="760">an action folder per lane</text>
+  <text class="ts" x="922" y="776">forwards only passing commits</text>
 
-  <rect class="svcg" x="58"  y="474" width="138" height="60" rx="6"/>
-  <text class="tb" x="127" y="495" text-anchor="middle">gunicorn</text>
-  <text class="ts" x="127" y="512" text-anchor="middle">2 workers, gthread</text>
-  <text class="ts" x="127" y="526" text-anchor="middle">unix socket</text>
+  <!-- traffic in -->
+  <path class="ln" d="M135,150 L448,204" marker-end="url(#a)"/>
+  <path class="lnp" d="M1000,150 L752,212" marker-end="url(#ap)"/>
+  <text class="tp" x="906" y="194" text-anchor="middle">webhooks</text>
+  <path class="lnr" d="M500,240 L500,350" marker-end="url(#ar)"/>
+  <text class="tr" x="510" y="330">:443 only</text>
+  <path class="ln" d="M300,540 L300,578" marker-end="url(#a)"/>
+  <text class="ts" x="310" y="564">CI site · API · webhook</text>
 
-  <rect class="svcg" x="206" y="474" width="138" height="60" rx="6"/>
-  <text class="tb" x="275" y="495" text-anchor="middle">celery worker</text>
-  <text class="ts" x="275" y="512" text-anchor="middle">async tasks</text>
-  <text class="ts" x="275" y="526" text-anchor="middle">Redis broker</text>
+  <!-- control plane to data plane -->
+  <path class="lnr" d="M640,378 L562,378" marker-end="url(#ar)"/>
+  <text class="tr" x="600" y="368" text-anchor="middle">SSH</text>
+  <text class="tr" x="600" y="396" text-anchor="middle">sudoers</text>
+  <path class="lnd" d="M544,480 L654,480" marker-end="url(#a)"/>
+  <text class="ts" x="600" y="472" text-anchor="middle">broker</text>
 
-  <rect class="svcg" x="354" y="474" width="138" height="60" rx="6"/>
-  <text class="tb" x="423" y="495" text-anchor="middle">celery beat</text>
-  <text class="ts" x="423" y="512" text-anchor="middle">periodic tasks</text>
-  <text class="ts" x="423" y="526" text-anchor="middle">DB-backed schedule</text>
+  <!-- CI -->
+  <path class="ln" d="M560,640 L638,640" marker-end="url(#a)"/>
+  <text class="ts" x="600" y="632" text-anchor="middle">jobs</text>
+  <path class="ln" d="M640,662 L562,662" marker-end="url(#a)"/>
+  <text class="ts" x="600" y="680" text-anchor="middle">results</text>
+  <path class="lnp" d="M1144,760 H1170 V152" marker-end="url(#ap)"/>
+  <text class="tp" x="1162" y="564" text-anchor="end">forwards passing commits</text>
 
-  <rect class="net" x="58" y="556" width="434" height="76" rx="6"/>
-  <text class="tb" x="74" y="576">systemd — templated (%i) + generated concrete units</text>
-  <text class="ts" x="74" y="594">gunicorn@&lt;app&gt; · celery@&lt;app&gt; · celerybeat@&lt;app&gt;</text>
-  <text class="ts" x="74" y="610">EnvironmentFile=/srv/apps/&lt;app&gt;/.env · Restart=on-failure</text>
-  <text class="ts" x="74" y="625">RuntimeDirectoryPreserve=yes — socket survives a restart</text>
-
-  <rect class="net" x="58" y="644" width="434" height="74" rx="6"/>
-  <text class="tb" x="74" y="664">filesystem layout</text>
-  <text class="ts" x="74" y="682">/srv/apps/&lt;app&gt;/ — repo · venv · staticfiles · .env (0600)</text>
-  <text class="ts" x="74" y="698">/etc/letsencrypt/ — root-only 0700, opaque to the deploy user</text>
-  <text class="ts" x="74" y="712">~/.cp-staging/ — write-then-privileged-copy staging area</text>
-
-  <!-- ===== INFRA NODE ===== -->
-  <rect class="vm" x="550" y="356" width="470" height="390" rx="10"/>
-  <path class="svc" d="M550 366 a10 10 0 0 1 10 -10 h450 a10 10 0 0 1 10 10 v20 h-470 z"/>
-  <text class="tb" x="568" y="377">infra-node · 10.10.0.21 · CONTROL PLANE</text>
-
-  <rect class="svca" x="568" y="400" width="434" height="62" rx="6"/>
-  <text class="tb" x="584" y="420">Control Panel — FastAPI + Jinja2 (~5.6k LOC)</text>
-  <text class="ts" x="584" y="437">onboarding wizard · lifecycle · push-to-deploy · log viewer</text>
-  <text class="ts" x="584" y="453">SQLite state · Fernet-encrypted secrets · append-only audit log</text>
-
-  <rect class="svcg" x="568" y="474" width="210" height="60" rx="6"/>
-  <text class="tb" x="673" y="495" text-anchor="middle">Redis (shared)</text>
-  <text class="ts" x="673" y="512" text-anchor="middle">16 DBs, ledger-allocated</text>
-  <text class="ts" x="673" y="526" text-anchor="middle">broker + cache per app</text>
-
-  <rect class="svcg" x="792" y="474" width="210" height="60" rx="6"/>
-  <text class="tb" x="897" y="495" text-anchor="middle">systemd timers</text>
-  <text class="ts" x="897" y="512" text-anchor="middle">DDNS 5m · uptime 3m</text>
-  <text class="ts" x="897" y="526" text-anchor="middle">cert renewal daily</text>
-
-  <text class="ts" x="568" y="562">observability stack (Docker Compose):</text>
-
-  <rect class="svc" x="568" y="570" width="104" height="52" rx="6"/>
-  <text class="tb" x="620" y="592" text-anchor="middle">Grafana</text>
-  <text class="ts" x="620" y="608" text-anchor="middle">dashboards</text>
-
-  <rect class="svc" x="678" y="570" width="104" height="52" rx="6"/>
-  <text class="tb" x="730" y="592" text-anchor="middle">Loki</text>
-  <text class="ts" x="730" y="608" text-anchor="middle">log aggregation</text>
-
-  <rect class="svc" x="788" y="570" width="104" height="52" rx="6"/>
-  <text class="tb" x="840" y="592" text-anchor="middle">GlitchTip</text>
-  <text class="ts" x="840" y="608" text-anchor="middle">error tracking</text>
-
-  <rect class="svc" x="898" y="570" width="104" height="52" rx="6"/>
-  <text class="tb" x="950" y="592" text-anchor="middle">ntfy</text>
-  <text class="ts" x="950" y="608" text-anchor="middle">push alerts</text>
-
-  <rect class="net" x="568" y="636" width="434" height="82" rx="6"/>
-  <text class="tb" x="584" y="656">why the control plane is a separate machine</text>
-  <text class="ts" x="584" y="674">A botched deploy cannot take down the tool doing the deploying.</text>
-  <text class="ts" x="584" y="690">Secrets stay here encrypted at rest; the app node only ever receives</text>
-  <text class="ts" x="584" y="706">the single .env it needs, over SFTP — never inside a shell command.</text>
-
-  <text class="tm" x="38" y="754">app-node also makes outbound calls to Let's Encrypt (ACME), vendor APIs and object storage.</text>
-
-  <!-- ============ EDGES ============ -->
-  <line class="ln" x1="530" y1="194" x2="530" y2="218" marker-end="url(#a)"/>
-  <path class="ln" d="M 480 270 L 480 340 L 275 340 L 275 356" marker-end="url(#a)"/>
-  <text class="ts" x="290" y="334">HTTPS :443</text>
-
-  <path class="lnr" d="M 550 371 L 518 371" marker-end="url(#ar)"/>
-
-  <path class="lnd" d="M 275 534 L 275 542 L 673 542 L 673 536" marker-end="url(#a)"/>
-
-  <path class="lnp" d="M 40 420 L 30 420 L 30 132 L 120 132 L 120 122" marker-end="url(#ap)"/>
-  <text class="ts" x="134" y="130">DATABASE_URL over TLS</text>
-
-  <path class="lnp" d="M 1020 420 L 1032 420 L 1032 132 L 934 132 L 934 122" marker-end="url(#ap)"/>
-  <text class="ts" x="926" y="130" text-anchor="end">A-record refresh</text>
-
-  <!-- ============ LEGEND ============ -->
-  <line class="lnr" x1="40" y1="780" x2="70" y2="780"/>
-  <text class="ts" x="78" y="784">SSH orchestration (single scoped key)</text>
-  <line class="lnd" x1="330" y1="780" x2="360" y2="780"/>
-  <text class="ts" x="368" y="784">Redis broker / cache traffic</text>
-  <line class="lnp" x1="580" y1="780" x2="610" y2="780"/>
-  <text class="ts" x="618" y="784">outbound to external services</text>
-  <line class="ln" x1="820" y1="780" x2="850" y2="780"/>
-  <text class="ts" x="858" y="784">public request path</text>
+  <!-- outbound helpers -->
+  <path class="lnd" d="M913,318 V250 L706,152" marker-end="url(#a)"/>
+  <text class="tm" x="924" y="290">DDNS updates</text>
+  <path class="lnd" d="M470,318 L372,152" marker-end="url(#a)"/>
+  <text class="tm" x="446" y="258">DNS-01</text>
 </svg>

@@ -1,0 +1,11 @@
+# Example: runs the lane sync every 2 minutes on the hypervisor.
+[Unit]
+Description=Give new Pushlane accounts and organisations the shared job lane
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

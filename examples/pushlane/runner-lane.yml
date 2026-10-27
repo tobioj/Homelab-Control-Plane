@@ -1,0 +1,44 @@
+# Example: one lane's forgejo-runner config (sanitised; numbers illustrative).
+# The priority lane uses the same file with its own capacity, its own action folder and one connection per
+# priority account; the shared lane has one connection per remaining account and organisation.
+log:
+  level: info
+
+runner:
+  # no instance-wide registration: each account the lane serves has its own connection (see server:)
+  file: .runner-unused
+  capacity: 2                    # jobs at once on this lane
+  timeout: 1h                    # per job
+  # on restart, stop taking jobs and let running ones finish (up to the job limit) before exiting
+  shutdown_timeout: 1h
+  fetch_interval: 2s
+  labels:
+    - "ubuntu-latest:docker://ghcr.io/catthehacker/ubuntu:act-24.04"
+    - "ubuntu-24.04:docker://ghcr.io/catthehacker/ubuntu:act-24.04"
+    - "docker:docker://node:22-bookworm"
+    - "forwarder:docker://ci-forwarder:local"
+
+cache:
+  enabled: true
+  # one cache server for both lanes on this VM, localhost only; entries are kept per repository
+  external_server: "http://127.0.0.1:4011/"
+  secret_url: "file:/etc/forgejo-runner/cache-secret"
+
+container:
+  privileged: false                         # never: privileged containers can escape to the VM
+  docker_host: "-"                          # jobs never get the Docker socket
+  valid_volumes: []                         # and may not bind-mount anything from the VM
+  # per-job limits; the CI name resolves to the edge proxy because the router cannot hairpin
+  options: "--memory=4g --memory-swap=5g --cpus=4 --pids-limit=4096 --add-host=example-ci.duckdns.org:10.10.0.10"
+  force_pull: false
+
+host:
+  # each lane fetches actions into its own folder: a runner only serialises fetches between its own jobs
+  workdir_parent: /var/lib/forgejo-runner/.cache/act
+
+server:
+  connections:
+    owner-101:                   # one per account or organisation this lane serves
+      url: http://10.10.0.30:3000/
+      uuid: 00000000-0000-0000-0000-000000000000
+      token: <runner-token>
