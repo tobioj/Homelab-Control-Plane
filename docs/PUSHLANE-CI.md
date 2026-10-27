@@ -45,7 +45,7 @@ sequenceDiagram
         R->>G: forward job pushes the same commit (fast-forward only)
         P->>G: pushlane/ci = success
     else tests fail
-        R-->>P: run fails; the commit stays on Pushlane only
+        R-->>P: run fails, the commit stays on Pushlane only
         P-->>Dev: log, re-run and notification
     end
     Note over G,P: Changes made on GitHub (merges, "Update branch",<br/>review suggestions) come back through the GitHub App
